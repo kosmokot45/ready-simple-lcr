@@ -1,0 +1,12 @@
+[project]
+name = "ready-simple-lcr"
+version = "0.1.0"
+description = "Web software for LCR-meters"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "flask>=3.1.2",
+    "pyinstaller>=6.15.0",
+    "pyserial>=3.5",
+    "ruff>=0.14.8",
+]

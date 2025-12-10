@@ -1,0 +1,1 @@
+uv run pyinstaller --clean '.\LCR Meter.spec'
