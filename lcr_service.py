@@ -29,6 +29,66 @@ CMD_SET_BIAS = 70
 CMD_RESET = 71
 CMD_MEASURE = 72
 
+LOG_FILE_PATH = "lcr_protocol_log.csv"
+
+# Текстовые имена команд
+CMD_NAMES = {
+    64: "CMD_GET_NAME",
+    65: "CMD_AV_ON",
+    66: "CMD_AV_OFF",
+    67: "CMD_SET_FREQ",
+    70: "CMD_SET_BIAS",
+    71: "CMD_RESET",
+    72: "CMD_MEASURE",
+}
+
+
+def log_protocol(command_code, command_bytes, response_obj, response_bytes):
+    """
+    Записывает обмен с прибором в CSV-лог.
+
+    :param command_code: int, код команды (64, 65, ...)
+    :param command_bytes: bytes, отправленные байты
+    :param response_obj: объект ответа (str, dict, bool)
+    :param response_bytes: bytes, полученные байты
+    """
+    try:
+        # Преобразуем байты в читаемый hex
+        cmd_hex = " ".join(f"{b:02X}" for b in command_bytes)
+        resp_hex = " ".join(f"{b:02X}" for b in response_bytes) if response_bytes else ""
+
+        # Текст команды
+        cmd_text = CMD_NAMES.get(command_code, f"CMD_{command_code}")
+
+        # Текст ответа
+        if isinstance(response_obj, dict):
+            # Измерение — форматируем кратко
+            mode = response_obj.get("mode", "?")
+            val = response_obj.get("value")
+            unit = response_obj.get("unit", "")
+            if val is not None:
+                resp_text = f"{mode} = {val} {unit}"
+            else:
+                resp_text = "Measurement data"
+        elif isinstance(response_obj, str):
+            resp_text = response_obj
+        elif response_obj is True:
+            resp_text = "OK"
+        elif response_obj is False:
+            resp_text = "ERROR"
+        else:
+            resp_text = str(response_obj)
+
+        # Убедимся, что файл существует с заголовком
+        file_exists = os.path.isfile(LOG_FILE_PATH)
+        with open(LOG_FILE_PATH, "a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(["Timestamp", "Command", "Command Bytes", "Response", "Response Bytes"])
+            writer.writerow([datetime.now().isoformat(), cmd_text, cmd_hex, resp_text, resp_hex])
+    except Exception as e:
+        logger.error(f"Ошибка записи протокола: {e}")
+
 
 @dataclass
 class DeviceConfig:
@@ -115,7 +175,7 @@ def disconnect_meter() -> Tuple[bool, str]:
 
 
 def send_command(command: int, params: bytes = b"") -> Union[bool, str, Dict, None]:
-    """Отправка команды и получение ответа"""
+    """Отправка команды и получение ответа с логированием протокола"""
     if not state.connection or not state.connection.is_open:
         logger.warning("Нет подключения")
         return None
@@ -124,7 +184,31 @@ def send_command(command: int, params: bytes = b"") -> Union[bool, str, Dict, No
         packet = bytes([0xAA, command]) + params
         state.connection.write(packet)
         time.sleep(0.1)
-        return handle_response(command)
+        response_bytes = None
+
+        # Получаем "сырые" байты ответа для лога
+        if command == CMD_GET_NAME:
+            name_bytes = b""
+            while True:
+                b = state.connection.read(1)
+                if b == b"" or b == b"\x00":
+                    break
+                name_bytes += b
+            response_bytes = name_bytes
+            response_obj = name_bytes.decode("ascii", errors="ignore")
+        elif command == CMD_MEASURE:
+            data = state.connection.read(22)
+            response_bytes = data
+            response_obj = parse_measurement(data) if len(data) >= 22 else None
+        else:
+            header = state.connection.read(2)
+            response_bytes = header
+            response_obj = len(header) == 2 and header[0] == 0xAA and header[1] == command
+
+        # Логируем обмен
+        log_protocol(command, packet, response_obj, response_bytes)
+
+        return response_obj
 
     except Exception as e:
         logger.error(f"Ошибка отправки команды {command}: {str(e)}")

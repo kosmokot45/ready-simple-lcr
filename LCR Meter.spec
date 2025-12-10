@@ -25,7 +25,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='LCR_Meter',
+    name='LCR_Meter_without_installing',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
