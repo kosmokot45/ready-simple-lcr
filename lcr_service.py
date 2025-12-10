@@ -1,5 +1,7 @@
 import csv
 import io
+import os
+import math
 import logging
 import struct
 import time
@@ -259,9 +261,13 @@ def parse_measurement(data: bytes) -> Optional[Dict]:
         freq = struct.unpack(">I", data[8:12])[0] / 100.0
         # |Z| (float big-endian)
         z_mag = struct.unpack(">f", data[12:16])[0]
+
         # Фаза (float big-endian, радианы → градусы)
         phase_rad = struct.unpack(">f", data[16:20])[0]
         phase_deg = phase_rad * 57.2957795
+
+        R_val = z_mag * math.cos(phase_rad)
+        X_val = z_mag * math.sin(phase_rad)
 
         mode_map = {0: "L", 1: "C", 2: "R", 3: "Z", 4: "Y", 5: "Q", 6: "D", 7: "θ"}
         speed_map = {0: "fast", 1: "normal", 2: "average"}
@@ -292,6 +298,8 @@ def parse_measurement(data: bytes) -> Optional[Dict]:
             "z_mag": round(z_mag, 6),
             "phase_rad": round(phase_rad, 6),
             "phase_deg": round(phase_deg, 4),
+            "R": round(R_val, 6),
+            "X": round(X_val, 6),
             "bias_mv": bias_mv,
             "speed": speed_map.get(speed_code, "unknown"),
             "range": f"{10**(7-range_code)} Ω" if range_code < 8 else "auto",
