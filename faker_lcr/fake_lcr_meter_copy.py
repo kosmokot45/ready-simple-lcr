@@ -22,7 +22,7 @@ def normalize_com_port(port):
     return port
 
 
-SERIAL_PORT = normalize_com_port("COM11")
+SERIAL_PORT = normalize_com_port("COM6")
 # Настройки
 # SERIAL_PORT = r"\\.\COM11"
 BAUDRATE = 9600

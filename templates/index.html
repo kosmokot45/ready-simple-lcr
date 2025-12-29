@@ -54,6 +54,19 @@
             cursor: pointer;
             margin-top: 5px;
         }
+        .copy-btn {
+            background: #eee;
+            border: 1px solid #ccc;
+            padding: 2px 5px;
+            margin-left: 5px;
+            cursor: pointer;
+            font-size: 0.8em;
+            border-radius: 3px;
+        }
+
+        .copy-btn:hover {
+            background: #ddd;
+        }
         button:hover {
             background-color: #45a049;
         }
@@ -80,6 +93,7 @@
         }
         table {
             width: 100%;
+            max-width: 1000px;
             border-collapse: collapse;
         }
         th, td {
@@ -219,10 +233,22 @@
                 <table id="measurement-table">
                     <thead>
                         <tr>
-                            <th>Frequency</th>
-                            <th>|Z|</th>
-                            <th>re Z</th>
-                            <th>im Z</th>
+                            <th>
+                                Frequency
+                                <button class="copy-btn" data-col="frequency">📋</button>
+                            </th>
+                            <th>
+                                |Z|
+                                <button class="copy-btn" data-col="z_mag">📋</button>
+                            </th>
+                            <th>
+                                re Z
+                                <button class="copy-btn" data-col="R">📋</button>
+                            </th>
+                            <th>
+                                im Z
+                                <button class="copy-btn" data-col="X">📋</button>
+                            </th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -238,6 +264,8 @@
         let chartIm = null;
         let updateInterval = null;
         let isMeasuringLocally = false;
+
+        let latestMeasurements = []; 
         
         function initCharts() {
             if (chartRX) chartRX.destroy();
@@ -373,7 +401,7 @@
         function updateTable(data) {
             const tbody = $('#measurement-table tbody');
             tbody.empty();
-            const recent = data.slice(-10).reverse();
+            const recent = data.reverse();
             recent.forEach(m => {
                 tbody.append(`
                     <tr>
@@ -389,7 +417,7 @@
         function fetchMeasurements() {
             $.get('/measurements', function(response) {
                 const data = response.measurements;
-                // Обновляем только последние 100 точек
+                latestMeasurements = data;
                 updateCharts(data.slice(-100));
                 updateTable(data);
                 if (!response.is_measuring && isMeasuringLocally) {
@@ -411,6 +439,31 @@
             $('#stop-measure').prop('disabled', true);
             if (updateInterval) clearInterval(updateInterval);
         }
+
+        // Функция копирования столбца
+        function copyColumn(colKey) {
+            const rows = latestMeasurements; // ← используем latestMeasurements
+            if (!rows || rows.length === 0) {
+                alert("Нет данных для копирования");
+                return;
+            }
+
+            const values = rows.map(row => row[colKey]).join('\n');
+            navigator.clipboard.writeText(values)
+                .then(() => {
+                    alert(`Столбец "${colKey}" скопирован`);
+                })
+                .catch(err => {
+                    console.error('Ошибка копирования:', err);
+                    alert('Не удалось скопировать. Попробуйте вручную.');
+                });
+        }
+
+        // Обработчик кликов по кнопкам
+        $(document).on('click', '.copy-btn', function() {
+            const colKey = $(this).data('col');
+            copyColumn(colKey);
+        });
         
         $(document).ready(function() {
             // Инициализация графиков
