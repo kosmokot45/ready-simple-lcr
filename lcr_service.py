@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_BAUDRATE = 9600
-MEASUREMENT_INTERVAL = 0.1
+MEASUREMENT_INTERVAL = 0.01
 MAX_MEASUREMENTS = 1000
 
 # Command codes
@@ -100,12 +100,12 @@ class DeviceConfig:
     range: str = "auto"
     bias_voltage: float = 0.0  # в мВ
     frequency_start: float = 1000.0
-    frequency_end: float = 1000.0
+    frequency_end: float = 100000.0
     frequency_step: float = 100.0
     sweep_enabled: bool = False
     # If >0, number of points in the sweep. When >1, frequency_step is computed
     # as (frequency_end - frequency_start) / (points - 1)
-    points: int = 0
+    points: int = 100
     # sweep_once: bool = False
 
 
@@ -176,7 +176,7 @@ def disconnect_meter() -> Tuple[bool, str]:
         return False, f"Закрыть последовательное соединение: {str(e)}"
 
 
-def send_command(command: int, params: bytes = b"") -> Union[bool, str, Dict, None]:
+def send_command(command: int, params: bytes = b"", freq=1000) -> Union[bool, str, Dict, None]:
     """Отправка команды и получение ответа с логированием протокола"""
     if not state.connection or not state.connection.is_open:
         logger.warning("Нет подключения")
@@ -184,8 +184,11 @@ def send_command(command: int, params: bytes = b"") -> Union[bool, str, Dict, No
 
     try:
         packet = bytes([0xAA, command]) + params
-        state.connection.write(packet)
-        time.sleep(0.1)
+        if command == 67:
+            state.connection.write(bytes([0xAA, 67]) + struct.pack(">I", int(freq)))
+        else:
+            state.connection.write(packet)
+        time.sleep(0.01)
         response_bytes = None
 
         # Получаем "сырые" байты ответа для лога
@@ -201,7 +204,7 @@ def send_command(command: int, params: bytes = b"") -> Union[bool, str, Dict, No
         elif command == CMD_MEASURE:
             data = state.connection.read(22)
             response_bytes = data
-            response_obj = parse_measurement(data) if len(data) >= 22 else None
+            response_obj = parse_measurement(data) if len(data) >= 20 else None
         else:
             header = state.connection.read(2)
             response_bytes = header
@@ -247,7 +250,7 @@ def handle_response(command: int) -> Union[bool, str, Dict, None]:
 
 def parse_measurement(data: bytes) -> Optional[Dict]:
     """Парсинг 22 байт данных измерения"""
-    if len(data) < 22:
+    if len(data) <= 10:
         return None
 
     try:
@@ -258,7 +261,7 @@ def parse_measurement(data: bytes) -> Optional[Dict]:
         # Смещение (int16)
         bias_mv = struct.unpack("<h", data[4:6])[0] * 10
         # Частота (uint32 big-endian, freq*100)
-        freq = struct.unpack(">I", data[8:12])[0] / 100.0
+        freq = struct.unpack(">I", data[8:12])[0]
         # |Z| (float big-endian)
         z_mag = struct.unpack(">f", data[12:16])[0]
 
@@ -375,8 +378,8 @@ def measurement_worker():
                 freq = state.config.frequency_start + state._current_index * state.config.frequency_step
                 freq = min(freq, state.config.frequency_end)  # не выйти за end
                 state.config.frequency = freq
-                send_command(CMD_SET_FREQ, struct.pack(">I", int(freq * 100)))
-                time.sleep(0.1)
+                send_command(CMD_SET_FREQ, struct.pack(">I", int(freq)), freq)
+                time.sleep(0.01)
 
                 # Измеряем
                 measurement = send_command(CMD_MEASURE)
@@ -394,7 +397,7 @@ def measurement_worker():
             if state.config.frequency != freq:
                 state.config.frequency = freq
                 send_command(CMD_SET_FREQ, struct.pack(">I", int(freq * 100)))
-                time.sleep(0.1)
+                time.sleep(0.01)
             measurement = send_command(CMD_MEASURE)
             if measurement:
                 state.measurements.append(measurement)
@@ -529,7 +532,7 @@ def handle_config():
 
             if state.connection and state.connection.is_open:
                 # Set frequency
-                freq_bytes = struct.pack(">I", int(state.config.frequency))
+                freq_bytes = struct.pack(">I", int(state.config.frequency_start))
                 send_command(CMD_SET_FREQ, freq_bytes)
 
                 # Set bias voltage

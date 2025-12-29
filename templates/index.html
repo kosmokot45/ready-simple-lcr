@@ -94,7 +94,6 @@
             background-color: #f9f9f9;
         }
         .data-table {
-            max-height: 300px;
             overflow-y: auto;
         }
         .device-info {
@@ -136,32 +135,27 @@
             
             <div class="control-group">
                 <h2>Настройки измерения</h2>
-                <label for="frequency">Частота (Hz):</label>
-                <input type="number" id="frequency" value="1000" min="20" max="100000">
 
-                <div style="margin-top:10px; padding:8px; border:1px dashed #eee; border-radius:6px;">
-                    <label for="sweep_enabled" style="display:inline-block; margin-right:10px; font-weight:normal;">Включить sweep:</label>
-                    <input type="checkbox" id="sweep_enabled" />
-
-                    <div style="display:flex; gap:8px; margin-top:8px;">
+                <div style="margin-top:10px; border:1px dashed #eee; border-radius:6px;">
+                    <div style="display:flex; gap:4px; margin-top:8px;">
                         <div style="flex:1;">
-                            <label for="frequency_start">Start (Hz):</label>
+                            <label for="frequency_start">Начало (Гц):</label>
                             <input type="number" id="frequency_start" value="1000" min="1">
                         </div>
                         <div style="flex:1;">
-                            <label for="frequency_end">End (Hz):</label>
-                            <input type="number" id="frequency_end" value="1000" min="1">
+                            <label for="frequency_end">Конец (Гц):</label>
+                            <input type="number" id="frequency_end" value="50000" min="1">
                         </div>
                         <div style="flex:1;">
-                            <label for="frequency_step">Step (Hz):</label>
+                            <label for="frequency_step">Шаг (Гц):</label>
                             <input type="number" id="frequency_step" value="100" min="0" step="0.1">
                         </div>
                         <div style="flex:1;">
-                            <label for="points">Points:</label>
+                            <label for="points">Кол. точек:</label>
                             <input type="number" id="points" value="0" min="0" step="1">
                         </div>
                     </div>
-                    <small style="color:#666;">Если указано <strong>Points &gt; 1</strong>, шаг будет рассчитан автоматически.</small>
+                    <small style="color:#666;">Если указано <strong>Кол. точек &gt; 1</strong>, шаг будет рассчитан автоматически.</small>
                 </div>
                 <label for="mode">Режим измерения:</label>
                 <select id="mode">
@@ -192,17 +186,7 @@
                 <button id="update-config">Обновить настройки</button>
             </div>
 
-            <div class="control-group">
-                <h2>Отображение</h2>
-                <label for="plot-mode">Режим графика:</label>
-                <select id="plot-mode">
-                    <option value="z-phase">|Z| и фаза от частоты</option>
-                    <option value="r-x-vs-f">R и X от частоты</option>
-                    <option value="nyquist">Годограф (R–X)</option>
-                    <option value="l-c-vs-f">L и C от частоты</option>
-                </select>
-                <button id="apply-plot">Применить</button>
-            </div>
+
             
             <div class="control-group">
                 <h2>Контроль измерения</h2>
@@ -213,9 +197,19 @@
         </div>
         
         <div class="panel">
-            <h2>График в реальном времени</h2>
+            <h2>Графики</h2>
+            
             <div class="chart-container">
-                <canvas id="measurement-chart"></canvas>
+                <canvas id="chart-rx"></canvas>
+            </div>
+            <div class="chart-container">
+                <canvas id="chart-z"></canvas>
+            </div>
+            <div class="chart-container">
+                <canvas id="chart-re"></canvas>
+            </div>
+            <div class="chart-container">
+                <canvas id="chart-im"></canvas>
             </div>
         </div>
         
@@ -225,12 +219,10 @@
                 <table id="measurement-table">
                     <thead>
                         <tr>
-                            <th>Time</th>
-                            <th>Mode</th>
-                            <th>Value</th>
                             <th>Frequency</th>
                             <th>|Z|</th>
-                            <th>Phase</th>
+                            <th>re Z</th>
+                            <th>im Z</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -240,86 +232,142 @@
     </div>
 
     <script>
-        let currentPlotMode = 'z-phase';
+        let chartRX = null;
+        let chartZ = null;
+        let chartRe = null;
+        let chartIm = null;
         let updateInterval = null;
         let isMeasuringLocally = false;
         
         function initCharts() {
-            const ctx = document.getElementById('measurement-chart').getContext('2d');
-            if (window.mainChart) window.mainChart.destroy();
+            if (chartRX) chartRX.destroy();
+            if (chartZ) chartZ.destroy();
+            if (chartRe) chartRe.destroy();
+            if (chartIm) chartIm.destroy();
         
-            if (currentPlotMode === 'nyquist') {
-                window.mainChart = new Chart(ctx, {
-                    type: 'scatter',
-                    data: {
-                        datasets: [{
-                            label: 'Z (R + jX)',
-                            data: [],
-                            borderColor: 'blue',
-                            showLine: true
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        scales: {
-                            x: { title: { display: true, text: 'R (Ω)' } },
-                            y: { title: { display: true, text: 'X (Ω)' } }
-                        }
+            const ctxRX = document.getElementById('chart-rx').getContext('2d');
+            const ctxZ = document.getElementById('chart-z').getContext('2d');
+            const ctxRe = document.getElementById('chart-re').getContext('2d');
+            const ctxIm = document.getElementById('chart-im').getContext('2d');
+        
+            chartRX = new Chart(ctxRX, {
+                type: 'scatter',
+                data: {
+                    datasets: [{
+                        label: 'R–X (Годограф)',
+                        data: [],  // ← правильно: "data", а не просто "[]"
+                        borderColor: 'black',
+                        showLine: true,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { title: { display: true, text: 'R (Ω)' } },
+                        y: { title: { display: true, text: 'X (Ω)' } }
                     }
-                });
-            } else {
-                window.mainChart = new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: [],
-                        datasets: []
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        scales: {
-                            x: { title: { display: true, text: 'Частота (Гц)' } },
-                            y: { type: 'linear', position: 'left' },
-                            y1: { type: 'linear', position: 'right', grid: { drawOnChartArea: false } }
-                        }
+                }
+            });
+            
+            chartZ = new Chart(ctxZ, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: '|Z| (Ω)',
+                        data: [],
+                        borderColor: 'green',
+                        tension: 0.1,
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { title: { display: true, text: 'Частота (Гц)' } },
+                        y: { title: { display: true, text: '|Z| (Ω)' } }
                     }
-                });
-            }
+                }
+            });
+        
+            chartRe = new Chart(ctxRe, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Re(Z) = R (Ω)',
+                        data: [],
+                        borderColor: 'red',
+                        tension: 0.1,
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { title: { display: true, text: 'Частота (Гц)' } },
+                        y: { title: { display: true, text: 'R (Ω)' } }
+                    }
+                }
+            });
+        
+            chartIm = new Chart(ctxIm, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Im(Z) = X (Ω)',
+                        data: [],
+                        borderColor: 'blue',
+                        tension: 0.1,
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { title: { display: true, text: 'Частота (Гц)' } },
+                        y: { title: { display: true, text: 'X (Ω)' } }
+                    }
+                }
+            });
         }
         
         function updateCharts(data) {
-            if (!window.mainChart) return;
+            if (!chartZ || !chartRe || !chartIm) return;
+        
             const recent = data.slice(-100);
+            const freqs = recent.map(m => m.frequency || 0);
+            const zMag = recent.map(m => m.z_mag || 0);
+            const reZ = recent.map(m => m.R || 0);
+            const imZ = recent.map(m => m.X || 0);
+            const absimZ = recent.map(m => (m.X * -1 || 0));
+
+
+            const points = reZ.map((r, i) => ({
+                x: r,
+                y: Math.abs(imZ[i])
+            }));
         
-            if (currentPlotMode === 'nyquist') {
-                const points = recent.map(m => ({ x: m.R || 0, y: m.X || 0 }));
-                window.mainChart.data.datasets[0].data = points;
-            } else {
-                const freqs = recent.map(m => m.frequency || 0);
-                let series1 = [], series2 = [];
+            chartRX.data.datasets[0].data = points;
+            chartRX.update();
+            
+            chartZ.data.labels = freqs;
+            chartZ.data.datasets[0].data = zMag;
+            chartZ.update();
         
-                switch (currentPlotMode) {
-                    case 'r-x-vs-f':
-                        series1 = recent.map(m => m.R || 0);
-                        series2 = recent.map(m => m.X || 0);
-                        break;
-                    case 'l-c-vs-f':
-                        series1 = recent.map(m => m.mode === 'L' ? (m.value || 0) : null);
-                        series2 = recent.map(m => m.mode === 'C' ? (m.value || 0) : null);
-                        break;
-                    default: // z-phase
-                        series1 = recent.map(m => m.z_mag || 0);
-                        series2 = recent.map(m => m.phase_deg || 0);
-                }
+            chartRe.data.labels = freqs;
+            chartRe.data.datasets[0].data = reZ;
+            chartRe.update();
         
-                window.mainChart.data.labels = freqs;
-                window.mainChart.data.datasets = [
-                    { label: 'Series 1', data: series1, borderColor: 'red', yAxisID: 'y' },
-                    { label: 'Series 2', data: series2, borderColor: 'blue', yAxisID: 'y1' }
-                ];
-            }
-            window.mainChart.update();
+            chartIm.data.labels = freqs;
+            chartIm.data.datasets[0].data = imZ;
+            chartIm.update();
         }
         
         function updateTable(data) {
@@ -329,12 +377,10 @@
             recent.forEach(m => {
                 tbody.append(`
                     <tr>
-                        <td>${m.timestamp?.split('T')[1]?.slice(0,8) || ''}</td>
-                        <td>${m.mode || ''}</td>
-                        <td>${(m.value !== undefined ? m.value.toFixed(4) : '-') + (m.unit || '')}</td>
                         <td>${m.frequency || ''}</td>
-                        <td>${(m.z_mag || 0).toFixed(4)} Ω</td>
-                        <td>${(m.phase_deg || 0).toFixed(2)}°</td>
+                        <td>${(m.z_mag || 0).toFixed(4)} </td> 
+                        <td>${(m.R || 0).toFixed(4)} </td> 
+                        <td>${(m.X || 0).toFixed(4)} </td> 
                     </tr>
                 `);
             });
@@ -342,11 +388,11 @@
         
         function fetchMeasurements() {
             $.get('/measurements', function(response) {
-                const data = response.measurements || [];
-                const isMeasuring = response.is_measuring;
-                updateCharts(data);
+                const data = response.measurements;
+                // Обновляем только последние 100 точек
+                updateCharts(data.slice(-100));
                 updateTable(data);
-                if (!isMeasuring && isMeasuringLocally) {
+                if (!response.is_measuring && isMeasuringLocally) {
                     stopMeasurementUI();
                 }
             });
@@ -367,28 +413,31 @@
         }
         
         $(document).ready(function() {
+            // Инициализация графиков
+            initCharts();
+        
             // Подключение
             $('#connect-btn').click(function() {
                 const port = $('#port-select').val();
                 const baudrate = $('#baudrate').val();
-                $.post('/connect', { port, baudrate }, function(response) {
+                $.post('/connect', { port: port, baudrate: baudrate }, function(response) {
                     if (response.success) {
                         $('#connection-status')
                             .removeClass('disconnected')
                             .addClass('connected')
-                            .text('Connected to ' + port);
+                            .text('Подключено к ' + port);
                         $('#connect-btn').prop('disabled', true);
                         $('#disconnect-btn').prop('disabled', false);
                         if (response.device_info) {
                             $('#device-info').html(`
-                                <strong>Device:</strong> ${response.device_info.name || 'Unknown'}<br>
-                                <strong>ID:</strong> ${response.device_info.id || 'Unknown'}
+                                <strong>Прибор:</strong> ${response.device_info.name || 'Неизвестен'}<br>
+                                <strong>ID:</strong> ${response.device_info.id || 'Неизвестен'}
                             `);
                         }
                     } else {
-                        alert('Connection failed: ' + response.message);
+                        alert('Ошибка подключения: ' + response.message);
                     }
-                }).fail(() => alert('Connection request failed'));
+                }).fail(() => alert('Не удалось отправить запрос на подключение'));
             });
         
             $('#disconnect-btn').click(function() {
@@ -397,7 +446,7 @@
                         $('#connection-status')
                             .removeClass('connected')
                             .addClass('disconnected')
-                            .text('Disconnected');
+                            .text('Отключено');
                         $('#connect-btn').prop('disabled', false);
                         $('#disconnect-btn').prop('disabled', true);
                         $('#device-info').empty();
@@ -431,22 +480,16 @@
                     points: $('#points').val(),
                     sweep_enabled: $('#sweep_enabled').is(':checked')
                 }, function(response) {
-                    if (!response.success) alert('Config error: ' + response.message);
+                    if (!response.success) alert('Ошибка настройки: ' + response.message);
                 });
             });
         
-            $('#apply-plot').click(function() {
-                currentPlotMode = $('#plot-mode').val();
-                initCharts();
-                fetchMeasurements();
-            });
-        
+            // Экспорт
             $('#export-csv').click(function() {
                 window.location.href = '/export';
             });
         
-            // Инициализация
-            initCharts();
+            // Загрузка текущей конфигурации
             $.get('/config', function(config) {
                 $('#frequency').val(config.frequency);
                 $('#mode').val(config.mode);
@@ -459,6 +502,6 @@
                 $('#sweep_enabled').prop('checked', config.sweep_enabled);
             });
         });
-        </script>
+    </script>
 </body>
 </html>

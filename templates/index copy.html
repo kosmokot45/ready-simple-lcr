@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LCR Meter Interface</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .panel {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+            flex: 1;
+            min-width: 300px;
+        }
+        h1, h2 {
+            color: #333;
+            margin-top: 0;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        select, input, button {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            margin-top: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .connected {
+            background-color: #dff0d8;
+            color: #3c763d;
+        }
+        .disconnected {
+            background-color: #f2dede;
+            color: #a94442;
+        }
+        .chart-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        .data-table {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .device-info {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #e7f3fe;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="panel">
+            <h1>LCR Meter E7-28</h1>
+            
+            <div class="control-group">
+                <h2>Подключение</h2>
+
+                 <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                    <div style="flex: 1;">
+                        <label for="port-select">COM порт:</label>
+                        <select id="port-select">
+                            {% for port in ports %}
+                            <option value="{{ port }}">{{ port }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div style="flex: 1;">
+                        <label for="baudrate">Скорость (baud):</label>
+                        <input type="number" id="baudrate" value="9600" min="1200" max="115200" step="100">
+                    </div>
+                </div>
+
+                <button id="connect-btn">Подключение</button>
+                <button id="disconnect-btn" disabled>Отключение</button>
+                <div id="connection-status" class="status disconnected">Отключено</div>
+                <div id="device-info" class="device-info"></div>
+            </div>
+            
+            <div class="control-group">
+                <h2>Настройки измерения</h2>
+                <label for="frequency">Частота (Hz):</label>
+                <input type="number" id="frequency" value="1000" min="20" max="100000">
+
+                <div style="margin-top:10px; padding:8px; border:1px dashed #eee; border-radius:6px;">
+                    <label for="sweep_enabled" style="display:inline-block; margin-right:10px; font-weight:normal;">Включить sweep:</label>
+                    <input type="checkbox" id="sweep_enabled" />
+
+                    <div style="display:flex; gap:8px; margin-top:8px;">
+                        <div style="flex:1;">
+                            <label for="frequency_start">Start (Hz):</label>
+                            <input type="number" id="frequency_start" value="1000" min="1">
+                        </div>
+                        <div style="flex:1;">
+                            <label for="frequency_end">End (Hz):</label>
+                            <input type="number" id="frequency_end" value="1000" min="1">
+                        </div>
+                        <div style="flex:1;">
+                            <label for="frequency_step">Step (Hz):</label>
+                            <input type="number" id="frequency_step" value="100" min="0" step="0.1">
+                        </div>
+                        <div style="flex:1;">
+                            <label for="points">Points:</label>
+                            <input type="number" id="points" value="0" min="0" step="1">
+                        </div>
+                    </div>
+                    <small style="color:#666;">Если указано <strong>Points &gt; 1</strong>, шаг будет рассчитан автоматически.</small>
+                </div>
+                <label for="mode">Режим измерения:</label>
+                <select id="mode">
+                    <option value="Z">Impedance (Z)</option>
+                    <option value="L">Inductance (L)</option>
+                    <option value="C">Capacitance (C)</option>
+                    <option value="R">Resistance (R)</option>
+                    <option value="θ">Phase Angle (θ)</option>
+                </select>
+                
+                <label for="speed">Скорость измерения:</label>
+                <select id="speed">
+                    <option value="fast">Fast</option>
+                    <option value="normal" selected>Normal</option>
+                    <option value="average">Average</option>
+                </select>
+                
+                <label for="range">Диапазон измерения:</label>
+                <select id="range">
+                    <option value="auto" selected>Auto</option>
+                    <option value="10M">10 MΩ</option>
+                    <option value="1M">1 MΩ</option>
+                    <option value="100K">100 KΩ</option>
+                    <option value="10K">10 KΩ</option>
+                    <option value="1K">1 KΩ</option>
+                </select>
+                
+                <button id="update-config">Обновить настройки</button>
+            </div>
+            
+            <div class="control-group">
+                <h2>Контроль измерения</h2>
+                <button id="start-measure">Начать измерение</button>
+                <button id="stop-measure" disabled>Остановить измерение</button>
+                <button id="export-csv">Экспорт в CSV</button>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h2>График в реальном времени</h2>
+            <div class="chart-container">
+                <canvas id="measurement-chart"></canvas>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h2>Результаты измерений</h2>
+            <div class="data-table">
+                <table id="measurement-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Mode</th>
+                            <th>Value</th>
+                            <th>Frequency</th>
+                            <th>|Z|</th>
+                            <th>Phase</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let chart = null;
+        let isMeasuring = false;
+        let updateInterval = null;
+        
+        // Initialize Chart
+        function initChart() {
+            const ctx = document.getElementById('measurement-chart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Value',
+                            data: [],
+                            borderColor: 'rgb(75, 192, 192)',
+                            tension: 0.1,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: 'Phase (°)',
+                            data: [],
+                            borderColor: 'rgb(255, 99, 132)',
+                            tension: 0.1,
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Time'
+                            }
+                        },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: {
+                                display: true,
+                                text: 'Value'
+                            }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: {
+                                display: true,
+                                text: 'Phase (°)'
+                            },
+                            grid: {
+                                drawOnChartArea: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Update chart with new data
+        function updateChart(data) {
+            if (!chart) return;
+            
+            // Keep only the last 50 points for performance
+            const recentData = data.slice(-50);
+            
+            chart.data.labels = recentData.map(m => m.timestamp.split('T')[1].slice(0,8));
+            chart.data.datasets[0].data = recentData.map(m => m.value || m.z_mag);
+            chart.data.datasets[1].data = recentData.map(m => m.phase_deg);
+            chart.data.datasets[0].label = recentData.length > 0 ? 
+                `${recentData[0].mode} (${recentData[0].unit || 'Ω'})` : 'Value';
+            
+            chart.update();
+        }
+        
+        // Update data table
+        function updateTable(data) {
+            const tableBody = $('#measurement-table tbody');
+            tableBody.empty();
+            
+            // Display only the last 10 measurements in the table
+            const recentData = data.slice(-10).reverse();
+            
+            recentData.forEach(m => {
+                const row = `
+                    <tr>
+                        <td>${m.timestamp.split('T')[1].slice(0,8)}</td>
+                        <td>${m.mode}</td>
+                        <td>${m.value !== undefined ? m.value.toFixed(4) : '-'} ${m.unit || ''}</td>
+                        <td>${m.frequency}</td>
+                        <td>${m.z_mag.toFixed(4)} Ω</td>
+                        <td>${m.phase_deg.toFixed(2)}°</td>
+                    </tr>
+                `;
+                tableBody.append(row);
+            });
+        }
+        
+        // Fetch new measurements
+        function fetchMeasurements() {
+            $.get('/measurements', function(data) {
+                updateChart(data);
+                updateTable(data);
+            }).fail(() => console.log('Failed to fetch measurements'));
+        }
+        
+        // Connect to meter
+        $('#connect-btn').click(function() {
+            const port = $('#port-select').val();
+            $.post('/connect', { port: port }, function(response) {
+                if (response.success) {
+                    $('#connection-status')
+                        .removeClass('disconnected')
+                        .addClass('connected')
+                        .text('Connected to ' + port);
+                    $('#connect-btn').prop('disabled', true);
+                    $('#disconnect-btn').prop('disabled', false);
+                    
+                    // Display device info
+                    if (response.device_info) {
+                        $('#device-info').html(`
+                            <strong>Device:</strong> ${response.device_info.name || 'Unknown'}<br>
+                            <strong>ID:</strong> ${response.device_info.id || 'Unknown'}
+                        `);
+                    }
+                } else {
+                    alert('Connection failed: ' + response.message);
+                }
+            }).fail(() => alert('Connection request failed'));
+        });
+
+        // Connect to meter
+        $('#connect-btn').click(function() {
+            const port = $('#port-select').val();
+            const baudrate = $('#baudrate').val();
+
+            $.post('/connect', { 
+                port: port,
+                baudrate: baudrate
+            }, function(response) {
+                if (response.success) {
+                    $('#connection-status')
+                        .removeClass('disconnected')
+                        .addClass('connected')
+                        .text('Connected to ' + port);
+                    $('#connect-btn').prop('disabled', true);
+                    $('#disconnect-btn').prop('disabled', false);
+                    
+                    // Display device info
+                    if (response.device_info) {
+                        $('#device-info').html(`
+                            <strong>Device:</strong> ${response.device_info.name || 'Unknown'}<br>
+                            <strong>ID:</strong> ${response.device_info.id || 'Unknown'}
+                        `);
+                    }
+                } else {
+                    alert('Connection failed: ' + response.message);
+                }
+            }).fail(() => alert('Connection request failed'));
+        });
+        
+        // Disconnect from meter
+        $('#disconnect-btn').click(function() {
+            $.post('/disconnect', function(response) {
+                if (response.success) {
+                    $('#connection-status')
+                        .removeClass('connected')
+                        .addClass('disconnected')
+                        .text('Disconnected');
+                    $('#connect-btn').prop('disabled', false);
+                    $('#disconnect-btn').prop('disabled', true);
+                    $('#device-info').empty();
+                }
+            });
+        });
+
+        // Start measurement
+        $('#start-measure').click(function() {
+            $.post('/measurements', { action: 'start' }, function(response) {
+                if (response.success) {
+                    isMeasuring = true;
+                    $('#start-measure').prop('disabled', true);
+                    $('#stop-measure').prop('disabled', false);
+                    
+                    // Start periodic updates
+                    if (updateInterval) clearInterval(updateInterval);
+                    updateInterval = setInterval(fetchMeasurements, 500);
+                }
+            });
+        });
+        
+        // Update configuration
+        $('#update-config').click(function() {
+            const config = {
+                frequency: $('#frequency').val(),
+                mode: $('#mode').val(),
+                speed: $('#speed').val(),
+                range: $('#range').val(),
+                frequency_start: $('#frequency_start').val(),
+                frequency_end: $('#frequency_end').val(),
+                frequency_step: $('#frequency_step').val(),
+                points: $('#points').val(),
+                sweep_enabled: $('#sweep_enabled').is(':checked')
+            };
+            
+            $.post('/config', config, function(response) {
+                if (!response.success) {
+                    alert('Failed to update configuration: ' + response.message);
+                }
+            });
+        });
+        
+        // Stop measurement
+        $('#stop-measure').click(function() {
+            $.post('/measurements', { action: 'stop' }, function(response) {
+                if (response.success) {
+                    isMeasuring = false;
+                    $('#start-measure').prop('disabled', false);
+                    $('#stop-measure').prop('disabled', true);
+                    
+                    // Stop updates
+                    if (updateInterval) clearInterval(updateInterval);
+                }
+            });
+        });
+        
+        // Export to CSV
+        $('#export-csv').click(function() {
+            window.location.href = '/export';
+        });
+        
+        // Initialize the application
+        $(document).ready(function() {
+            initChart();
+            // Load current configuration
+            $.get('/config', function(config) {
+                $('#frequency').val(config.frequency);
+                $('#mode').val(config.mode);
+                $('#speed').val(config.speed);
+                $('#range').val(config.range);
+                // Load new sweep fields if present
+                if (config.frequency_start !== undefined) $('#frequency_start').val(config.frequency_start);
+                if (config.frequency_end !== undefined) $('#frequency_end').val(config.frequency_end);
+                if (config.frequency_step !== undefined) $('#frequency_step').val(config.frequency_step);
+                if (config.points !== undefined) $('#points').val(config.points);
+                if (config.sweep_enabled !== undefined) $('#sweep_enabled').prop('checked', !!config.sweep_enabled);
+            });
+        });
+    </script>
+</body>
+</html>

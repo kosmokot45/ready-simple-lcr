@@ -82,66 +82,119 @@ class FakeLCR:
             self.bias_voltage = 0
             return self._response(cmd)
 
+        # elif cmd == CMD_MEASURE:
+        #     # Эмулируем данные
+        #     z_mag = self._simulate_impedance()
+        #     phase_rad = self._simulate_phase()
+        #     flags = 0x80  # бит 7 = завершено
+        #     mode = 3  # Z
+        #     speed = 1  # норма
+        #     diap = 5  # 100 Ом
+        #     freq = int(self.frequency)
+
+        #     # Смещение: int16 → два байта (little-endian)
+        #     Uсм_val = int(self.bias_voltage / 10)
+        #     Uсм_bytes = struct.pack("<h", Uсм_val)
+        #     Uсм0, Uсм1 = Uсм_bytes[0], Uсм_bytes[1]
+
+        #     # Частота: uint32 → 4 байта (service expects freq*100, big-endian)
+        #     freq_int = int(freq * 100)
+        #     freq_bytes = struct.pack(">I", freq_int)
+        #     f0, f1, f2, f3 = freq_bytes[0], freq_bytes[1], freq_bytes[2], freq_bytes[3]
+
+        #     # |Z|: float → 4 байта big-endian
+        #     z_bytes = struct.pack(">f", z_mag)
+        #     z0, z1, z2, z3 = z_bytes[0], z_bytes[1], z_bytes[2], z_bytes[3]
+
+        #     # Фаза: float → 4 байта big-endian
+        #     fi_bytes = struct.pack(">f", phase_rad)
+        #     fi0, fi1, fi2, fi3 = fi_bytes[0], fi_bytes[1], fi_bytes[2], fi_bytes[3]
+
+        #     # Собираем 22 байта полезной нагрузки (без заголовка) в формате,
+        #     # который ожидает `service.parse_measurement`:
+        #     # [flags(1), mode(1), speed(1), range(1), Uсм0(1), Uсм1(1), pad0(1), pad1(1), freq(4), z(4), fi(4), pad(2)]
+        #     data = bytes(
+        #         [
+        #             flags,
+        #             mode,
+        #             speed,
+        #             diap,
+        #             Uсм0,
+        #             Uсм1,
+        #             0,
+        #             0,  # padding to match expected offsets
+        #             f0,
+        #             f1,
+        #             f2,
+        #             f3,
+        #             z0,
+        #             z1,
+        #             z2,
+        #             z3,
+        #             fi0,
+        #             fi1,
+        #             fi2,
+        #             fi3,
+        #             0,
+        #             0,  # final padding to reach 22 bytes
+        #         ]
+        #     )
+
+        #     # For measurement command we return payload *without* the 0xAA,cmd header
+        #     return data
         elif cmd == CMD_MEASURE:
-            # Эмулируем данные
+            # Симуляция данных в точном соответствии с логом
             z_mag = self._simulate_impedance()
             phase_rad = self._simulate_phase()
-            flags = 0x80  # бит 7 = завершено
-            mode = 3  # Z
-            speed = 1  # норма
-            diap = 5  # 100 Ом
-            freq = int(self.frequency)
+            flags = 0x99  # как в логе
+            mode = 3  # Z (в логе mode=3, но в данных mode=2 — оставим 3)
+            speed = 1  # normal
+            diap = 1  # range_code = 1 (как в логе)
 
-            # Смещение: int16 → два байта (little-endian)
-            Uсм_val = int(self.bias_voltage / 10)
-            Uсм_bytes = struct.pack("<h", Uсм_val)
-            Uсм0, Uсм1 = Uсм_bytes[0], Uсм_bytes[1]
+            # Смещение (int16, little-endian, в десятках мВ → умножаем на 10)
+            bias_raw = int(self.bias_voltage / 10)
+            bias_bytes = struct.pack("<h", bias_raw)
+            U0, U1 = bias_bytes[0], bias_bytes[1]
 
-            # Частота: uint32 → 4 байта (service expects freq*100, big-endian)
-            freq_int = int(freq * 100)
-            freq_bytes = struct.pack(">I", freq_int)
+            # Частота: uint32, big-endian, **без *100**
+            freq_bytes = struct.pack(">I", int(self.frequency))
             f0, f1, f2, f3 = freq_bytes[0], freq_bytes[1], freq_bytes[2], freq_bytes[3]
 
-            # |Z|: float → 4 байта big-endian
+            # |Z|: float, big-endian
             z_bytes = struct.pack(">f", z_mag)
             z0, z1, z2, z3 = z_bytes[0], z_bytes[1], z_bytes[2], z_bytes[3]
 
-            # Фаза: float → 4 байта big-endian
+            # Фаза: float, big-endian, **в радианах**
             fi_bytes = struct.pack(">f", phase_rad)
             fi0, fi1, fi2, fi3 = fi_bytes[0], fi_bytes[1], fi_bytes[2], fi_bytes[3]
 
-            # Собираем 22 байта полезной нагрузки (без заголовка) в формате,
-            # который ожидает `service.parse_measurement`:
-            # [flags(1), mode(1), speed(1), range(1), Uсм0(1), Uсм1(1), pad0(1), pad1(1), freq(4), z(4), fi(4), pad(2)]
-            data = bytes(
+            # Формируем 22 байта (как в логе)
+            payload = bytes(
                 [
                     flags,
                     mode,
                     speed,
                     diap,
-                    Uсм0,
-                    Uсм1,
+                    U0,
+                    U1,
                     0,
-                    0,  # padding to match expected offsets
+                    0,  # bias + padding
                     f0,
                     f1,
                     f2,
-                    f3,
+                    f3,  # frequency
                     z0,
                     z1,
                     z2,
-                    z3,
+                    z3,  # |Z|
                     fi0,
                     fi1,
                     fi2,
-                    fi3,
-                    0,
-                    0,  # final padding to reach 22 bytes
+                    fi3,  # phase (radians)
                 ]
             )
 
-            # For measurement command we return payload *without* the 0xAA,cmd header
-            return data
+            return payload  # без заголовка AA 48
 
         else:
             print(f"Неизвестная команда: {cmd}")
@@ -159,14 +212,12 @@ class FakeLCR:
         return max(base + noise + drift, 1.0)
 
     def _simulate_phase(self) -> float:
-        phase_deg = 0.0
-        if self.frequency > 5000:
-            phase_deg = random.uniform(-5, -1)
-        elif self.frequency < 100:
-            phase_deg = random.uniform(1, 5)
-        else:
-            phase_deg = random.uniform(-2, 2)
-        return phase_deg * (3.14159265 / 180)  # в радианы
+        freq = self.frequency
+        R = 1000.0
+        L = 0.001  # 1 мГн
+        X = 2 * math.pi * freq * L
+        phase_rad = math.atan2(X, R)
+        return phase_rad
 
     def _response(self, cmd: int, data: bytes = b"") -> bytes:
         return bytes([0xAA, cmd]) + data
@@ -192,7 +243,7 @@ def main():
 
                 cmd = header[1]
                 params = b""
-                # Читаем параметры, если они есть
+                # Читаем параметры, ели они есть
                 if cmd == CMD_SET_FREQ and ser.in_waiting >= 4:
                     params = ser.read(4)
                 elif cmd == CMD_SET_BIAS and ser.in_waiting >= 2:
