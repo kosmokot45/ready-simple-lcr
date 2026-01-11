@@ -1,21 +1,44 @@
+"""
+main.py - Точка входа для PyInstaller
+"""
+
 import time
 import webbrowser
 import threading
+import sys
+import os
 
-import lcr_service
+# Добавляем текущую директорию в путь для импорта
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import service
 
 
 def open_browser():
     """Открывает браузер через 1 секунду"""
-    time.sleep(1)
-    webbrowser.open("http://localhost:8005")
+    time.sleep(1.5)
+    try:
+        webbrowser.open("http://localhost:5000")
+        print("Браузер открыт: http://localhost:5000")
+    except Exception as e:
+        print(f"Не удалось открыть браузер: {e}")
 
 
 if __name__ == "__main__":
-    # open_browser()
+    print("=" * 50)
+    print("LCR Meter Service")
+    print("Веб-интерфейс: http://localhost:5000")
+    print("=" * 50)
 
-    threading.Thread(target=lcr_service.measurement_worker, daemon=True).start()
+    # Запускаем открытие браузера в отдельном потоке
+    browser_thread = threading.Thread(target=open_browser, daemon=True)
+    browser_thread.start()
 
-    threading.Thread(target=open_browser, daemon=True).start()
-
-    lcr_service.app.run(host="127.0.0.1", port=8005, debug=False, threaded=True)
+    # Запускаем веб-сервер
+    try:
+        service.app.run(host="127.0.0.1", port=5000, debug=False, threaded=True, use_reloader=False)
+    except KeyboardInterrupt:
+        print("\nСервер остановлен пользователем")
+    except Exception as e:
+        print(f"Ошибка запуска сервера: {e}")
+        sys.exit(1)

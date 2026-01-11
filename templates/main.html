@@ -264,6 +264,7 @@
         let chartIm = null;
         let updateInterval = null;
         let isMeasuringLocally = false;
+        let latestMeasurements = [];
         
         function initCharts() {
             if (chartRX) chartRX.destroy();
@@ -283,16 +284,24 @@
                         label: 'R–X (Годограф)',
                         data: [],
                         borderColor: 'black',
+                        backgroundColor: 'rgba(0, 0, 0, 0.1)',
                         showLine: true,
-                        tension: 0.1
+                        tension: 0.1,
+                        pointRadius: 3
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     scales: {
-                        x: { title: { display: true, text: 'R (Ω)' } },
-                        y: { title: { display: true, text: 'X (Ω)' } }
+                        x: { 
+                            title: { display: true, text: 'R (Ω)' },
+                            type: 'linear'
+                        },
+                        y: { 
+                            title: { display: true, text: '|X| (Ω)' },
+                            type: 'linear'
+                        }
                     }
                 }
             });
@@ -305,16 +314,24 @@
                         label: '|Z| (Ω)',
                         data: [],
                         borderColor: 'green',
+                        backgroundColor: 'rgba(0, 255, 0, 0.1)',
                         tension: 0.1,
-                        fill: false
+                        fill: false,
+                        pointRadius: 2
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     scales: {
-                        x: { title: { display: true, text: 'Частота (Гц)' } },
-                        y: { title: { display: true, text: '|Z| (Ω)' } }
+                        x: { 
+                            title: { display: true, text: 'Частота (Гц)' },
+                            type: 'linear'
+                        },
+                        y: { 
+                            title: { display: true, text: '|Z| (Ω)' },
+                            type: 'linear'
+                        }
                     }
                 }
             });
@@ -327,16 +344,24 @@
                         label: 'Re(Z) = R (Ω)',
                         data: [],
                         borderColor: 'red',
+                        backgroundColor: 'rgba(255, 0, 0, 0.1)',
                         tension: 0.1,
-                        fill: false
+                        fill: false,
+                        pointRadius: 2
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     scales: {
-                        x: { title: { display: true, text: 'Частота (Гц)' } },
-                        y: { title: { display: true, text: 'R (Ω)' } }
+                        x: { 
+                            title: { display: true, text: 'Частота (Гц)' },
+                            type: 'linear'
+                        },
+                        y: { 
+                            title: { display: true, text: 'R (Ω)' },
+                            type: 'linear'
+                        }
                     }
                 }
             });
@@ -349,16 +374,24 @@
                         label: 'Im(Z) = X (Ω)',
                         data: [],
                         borderColor: 'blue',
+                        backgroundColor: 'rgba(0, 0, 255, 0.1)',
                         tension: 0.1,
-                        fill: false
+                        fill: false,
+                        pointRadius: 2
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     scales: {
-                        x: { title: { display: true, text: 'Частота (Гц)' } },
-                        y: { title: { display: true, text: 'X (Ω)' } }
+                        x: { 
+                            title: { display: true, text: 'Частота (Гц)' },
+                            type: 'linear'
+                        },
+                        y: { 
+                            title: { display: true, text: 'X (Ω)' },
+                            type: 'linear'
+                        }
                     }
                 }
             });
@@ -367,41 +400,47 @@
         function updateCharts(data) {
             if (!chartZ || !chartRe || !chartIm || !chartRX) return;
         
-            const recent = data.slice(-100);
-            const freqs = recent.map(m => m.frequency || 0);
-            const zMag = recent.map(m => m.z_mag || 0);
-            const reZ = recent.map(m => m.R || 0);
-            const imZ = recent.map(m => m.X || 0);
+            if (data.length === 0) return;
+            
+            const freqs = data.map(m => m.frequency || 0);
+            const zMag = data.map(m => m.z_mag || 0);
+            const reZ = data.map(m => m.R || 0);
+            const imZ = data.map(m => m.X || 0);
+            const absImZ = data.map(m => Math.abs(m.X || 0)); // Берем абсолютное значение X
         
             const points = reZ.map((r, i) => ({
                 x: r,
-                y: imZ[i]
+                y: absImZ[i] // Используем абсолютное значение
             }));
         
             chartRX.data.datasets[0].data = points;
-            chartRX.update();
+            chartRX.update('none');
             
             chartZ.data.labels = freqs;
             chartZ.data.datasets[0].data = zMag;
-            chartZ.update();
+            chartZ.update('none');
         
             chartRe.data.labels = freqs;
             chartRe.data.datasets[0].data = reZ;
-            chartRe.update();
+            chartRe.update('none');
         
             chartIm.data.labels = freqs;
             chartIm.data.datasets[0].data = imZ;
-            chartIm.update();
+            chartIm.update('none');
         }
         
         function updateTable(data) {
             const tbody = $('#measurement-table tbody');
             tbody.empty();
-            const recent = data.slice().reverse(); // Последние измерения сверху
+            
+            if (data.length === 0) return;
+            
+            // Показываем последние 20 измерений (новые сверху)
+            const recent = data.slice(-20).reverse();
             recent.forEach(m => {
                 tbody.append(`
                     <tr>
-                        <td>${m.frequency || ''}</td>
+                        <td>${(m.frequency || 0).toFixed(1)}</td>
                         <td>${(m.z_mag || 0).toFixed(4)}</td>
                         <td>${(m.R || 0).toFixed(4)}</td>
                         <td>${(m.X || 0).toFixed(4)}</td>
@@ -411,35 +450,67 @@
         }
     
         function copyColumn(colKey) {
-            const rows = latestMeasurements;
-            if (!rows || rows.length === 0) {
+            if (!latestMeasurements || latestMeasurements.length === 0) {
                 alert("Нет данных для копирования");
                 return;
             }
     
-            const values = rows.map(row => row[colKey]).join('\n');
+            const values = latestMeasurements.map(row => {
+                if (colKey === 'frequency') return (row[colKey] || 0).toFixed(1);
+                if (colKey === 'z_mag' || colKey === 'R' || colKey === 'X') return (row[colKey] || 0).toFixed(4);
+                return row[colKey] || '';
+            }).join('\n');
+            
             navigator.clipboard.writeText(values)
                 .then(() => {
-                    alert(`Столбец "${colKey}" скопирован`);
+                    alert(`Столбец "${colKey}" скопирован (${latestMeasurements.length} значений)`);
                 })
                 .catch(err => {
                     console.error('Ошибка копирования:', err);
-                    alert('Не удалось скопировать. Попробуйте вручную.');
+                    // Fallback для старых браузеров
+                    const textArea = document.createElement('textarea');
+                    textArea.value = values;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    try {
+                        document.execCommand('copy');
+                        alert(`Столбец "${colKey}" скопирован`);
+                    } catch (e) {
+                        alert('Не удалось скопировать. Скопируйте вручную.');
+                    }
+                    document.body.removeChild(textArea);
                 });
         }
         
         function fetchMeasurements() {
-            $.get('/measurements', function(response) {
-                const data = response.measurements;
-                
-                if (data && data.length > 0) {
-                    updateCharts(data);
-                    updateTable(data);
-                    window.latestMeasurements = data; // Для копирования
+            // Если измерения не выполняются локально, не делаем запрос
+            if (!isMeasuringLocally) {
+                if (updateInterval) {
+                    clearInterval(updateInterval);
+                    updateInterval = null;
                 }
-                
-                if (!response.is_measuring && isMeasuringLocally) {
-                    stopMeasurementUI();
+                return;
+            }
+            
+            $.ajax({
+                url: '/measurements',
+                method: 'GET',
+                dataType: 'json',
+                timeout: 2000,
+                success: function(response) {
+                    if (response.measurements && response.measurements.length > 0) {
+                        latestMeasurements = response.measurements;
+                        updateCharts(response.measurements);
+                        updateTable(response.measurements);
+                    }
+                    
+                    // Если измерения завершились на сервере, останавливаем локально
+                    if (!response.is_measuring && isMeasuringLocally) {
+                        stopMeasurementUI();
+                    }
+                },
+                error: function(xhr, status, error) {
+                    console.log('Ошибка запроса данных:', error);
                 }
             });
         }
@@ -448,29 +519,82 @@
             isMeasuringLocally = true;
             $('#start-measure').prop('disabled', true);
             $('#stop-measure').prop('disabled', false);
-            updateInterval = setInterval(fetchMeasurements, 500); // Обновляем каждые 500 мс
+            
+            // Быстрое обновление каждые 300 мс
+            if (updateInterval) clearInterval(updateInterval);
+            updateInterval = setInterval(fetchMeasurements, 300);
         }
         
         function stopMeasurementUI() {
             isMeasuringLocally = false;
             $('#start-measure').prop('disabled', false);
             $('#stop-measure').prop('disabled', true);
+            
             if (updateInterval) {
                 clearInterval(updateInterval);
                 updateInterval = null;
             }
+            
             // Финальное обновление данных
-            fetchMeasurements();
+            setTimeout(fetchMeasurements, 300);
+        }
+    
+        function updateConfigFromForm() {
+            const configData = {
+                frequency_start: parseFloat($('#frequency_start').val()) || 1000,
+                frequency_end: parseFloat($('#frequency_end').val()) || 10000,
+                frequency_step: parseFloat($('#frequency_step').val()) || 100,
+                points: parseInt($('#points').val()) || 0,
+                mode: $('#mode').val(),
+                speed: $('#speed').val(),
+                range: $('#range').val(),
+                bias_voltage: 0
+            };
+            
+            // Если указано количество точек > 1 и частоты разные, пересчитываем шаг
+            if (configData.points > 1 && configData.frequency_start !== configData.frequency_end) {
+                const span = configData.frequency_end - configData.frequency_start;
+                configData.frequency_step = span / (configData.points - 1);
+                $('#frequency_step').val(configData.frequency_step.toFixed(2));
+            }
+            
+            // Отправляем как form-data, а не JSON
+            $.post('/config', configData, function(response) {
+                if (response.success) {
+                    console.log('Настройки обновлены:', response.config);
+                    // Обновляем поле шага на сервере, если оно было пересчитано
+                    if (response.config && response.config.frequency_step) {
+                        $('#frequency_step').val(response.config.frequency_step.toFixed(2));
+                    }
+                } else {
+                    alert('Ошибка обновления настроек: ' + response.message);
+                }
+            }).fail(function(xhr, status, error) {
+                console.error('Ошибка отправки настроек:', error);
+                alert('Не удалось обновить настройки');
+            });
         }
     
         $(document).ready(function() {
             // Инициализация графиков
             initCharts();
+            
+            // Загружаем начальные настройки
+            $.get('/config', function(config) {
+                $('#frequency_start').val(config.frequency_start);
+                $('#frequency_end').val(config.frequency_end);
+                $('#frequency_step').val(config.frequency_step || 100); // По умолчанию 100
+                $('#points').val(config.points);
+                $('#mode').val(config.mode);
+                $('#speed').val(config.speed);
+                $('#range').val(config.range);
+            });
         
             // Подключение
             $('#connect-btn').click(function() {
                 const port = $('#port-select').val();
                 const baudrate = $('#baudrate').val();
+                
                 $.post('/connect', { port: port, baudrate: baudrate }, function(response) {
                     if (response.success) {
                         $('#connection-status')
@@ -479,6 +603,7 @@
                             .text('Подключено к ' + port);
                         $('#connect-btn').prop('disabled', true);
                         $('#disconnect-btn').prop('disabled', false);
+                        
                         if (response.device_info) {
                             $('#device-info').html(`
                                 <strong>Прибор:</strong> ${response.device_info.name || 'Неизвестен'}<br>
@@ -501,6 +626,10 @@
                         $('#connect-btn').prop('disabled', false);
                         $('#disconnect-btn').prop('disabled', true);
                         $('#device-info').empty();
+                        // Останавливаем измерения при отключении
+                        if (isMeasuringLocally) {
+                            stopMeasurementUI();
+                        }
                     }
                 });
             });
@@ -508,29 +637,22 @@
             // Измерения
             $('#start-measure').click(function() {
                 // Сначала обновляем настройки
-                $.post('/config', {
-                    frequency_start: $('#frequency_start').val(),
-                    frequency_end: $('#frequency_end').val(),
-                    frequency_step: $('#frequency_step').val(),
-                    points: $('#points').val(),
-                    mode: $('#mode').val(),
-                    speed: $('#speed').val(),
-                    range: $('#range').val(),
-                    bias_voltage: 0
-                }, function(configResponse) {
-                    if (configResponse.success) {
-                        // Затем запускаем измерения
-                        $.post('/measurements', { action: 'start' }, function(response) {
-                            if (response.success) {
-                                startMeasurementUI();
-                            } else {
-                                alert('Ошибка запуска измерений: ' + response.message);
-                            }
-                        });
-                    } else {
-                        alert('Ошибка настройки: ' + configResponse.message);
-                    }
-                });
+                updateConfigFromForm();
+                
+                // Ждем немного и запускаем измерения
+                setTimeout(function() {
+                    $.post('/measurements', { action: 'start' }, function(response) {
+                        if (response.success) {
+                            startMeasurementUI();
+                        } else {
+                            alert('Ошибка запуска измерений: ' + response.message);
+                            $('#start-measure').prop('disabled', false);
+                        }
+                    }).fail(function() {
+                        alert('Не удалось запустить измерения');
+                        $('#start-measure').prop('disabled', false);
+                    });
+                }, 200);
             });
         
             $('#stop-measure').click(function() {
@@ -541,32 +663,33 @@
                 });
             });
         
-            // Конфигурация - обновление при изменении полей
-            $('#frequency_start, #frequency_end, #frequency_step, #points').change(function() {
+            // Автоматическое обновление шага при изменении точек
+            $('#points').on('input', function() {
+                const points = parseInt($(this).val()) || 0;
                 const start = parseFloat($('#frequency_start').val()) || 1000;
                 const end = parseFloat($('#frequency_end').val()) || 10000;
-                const points = parseInt($('#points').val()) || 0;
                 
                 if (points > 1 && start !== end) {
                     const step = (end - start) / (points - 1);
                     $('#frequency_step').val(step.toFixed(2));
+                    updateConfigFromForm();
                 }
+            });
+            
+            // Обновление настроек при изменении полей
+            $('#frequency_start, #frequency_end, #frequency_step, #mode, #speed, #range').on('change', function() {
+                updateConfigFromForm();
+            });
+            
+            // Кнопка обновления настроек
+            $('#update-config').click(function() {
+                updateConfigFromForm();
+                alert('Настройки обновлены');
             });
         
             // Экспорт
             $('#export-csv').click(function() {
                 window.location.href = '/export';
-            });
-        
-            // Загрузка текущей конфигурации
-            $.get('/config', function(config) {
-                $('#frequency_start').val(config.frequency_start);
-                $('#frequency_end').val(config.frequency_end);
-                $('#frequency_step').val(config.frequency_step);
-                $('#points').val(config.points);
-                $('#mode').val(config.mode);
-                $('#speed').val(config.speed);
-                $('#range').val(config.range);
             });
             
             // Обработчик копирования
@@ -574,6 +697,9 @@
                 const colKey = $(this).data('col');
                 copyColumn(colKey);
             });
+            
+            // Обновляем данные при загрузке страницы
+            setTimeout(fetchMeasurements, 500);
         });
     </script>
 </body>

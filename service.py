@@ -20,7 +20,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DEFAULT_BAUDRATE = 9600
-MEASUREMENT_INTERVAL = 0.01
 MAX_MEASUREMENTS = 1000
 
 # Command codes
@@ -97,10 +96,8 @@ class DeviceConfig:
     bias_voltage: float = 0.0  # в мВ
     frequency_start: float = 1000.0
     frequency_end: float = 100000.0
-    frequency_step: float = 100.0
+    frequency_step: float = 100.0  # Шаг по умолчанию 100 Гц
     sweep_enabled: bool = False
-    # If >0, number of points in the sweep. When >1, frequency_step is computed
-    # as (frequency_end - frequency_start) / (points - 1)
     points: int = 100
 
 
@@ -112,6 +109,8 @@ class MeterState:
         self.config = DeviceConfig()
         self.device_info = {"name": None, "id": None}
         self._last_measurement_id = 0
+        self._measurements_lock = threading.Lock()
+        self._stop_event = threading.Event()  # Событие для остановки
 
 
 state = MeterState()
@@ -130,8 +129,8 @@ def connect_to_meter(port: str, baudrate: int = DEFAULT_BAUDRATE) -> Tuple[bool,
             bytesize=serial.EIGHTBITS,
             parity=serial.PARITY_NONE,
             stopbits=serial.STOPBITS_ONE,
-            timeout=2,
-            write_timeout=2,
+            timeout=1,
+            write_timeout=1,
         )
         logger.info(f"Порт {port} открыт")
         name = send_command(CMD_GET_NAME)
@@ -173,25 +172,37 @@ def send_command(command: int, params: bytes = b"") -> Union[bool, str, Dict, No
 
     try:
         packet = bytes([0xAA, command]) + params
+        logger.debug(f"Отправка: {packet.hex()}")
         state.connection.write(packet)
-        time.sleep(0.01)
+        time.sleep(0.05)  # Увеличим задержку
+
         response_bytes = None
 
         # Получаем "сырые" байты ответа для лога
         if command == CMD_GET_NAME:
             name_bytes = b""
-            while True:
-                b = state.connection.read(1)
-                if b == b"" or b == b"\x00":
-                    break
-                name_bytes += b
+            start_time = time.time()
+            while time.time() - start_time < 2:
+                if state.connection.in_waiting > 0:
+                    b = state.connection.read(1)
+                    if b == b"" or b == b"\x00":
+                        break
+                    name_bytes += b
+                else:
+                    time.sleep(0.01)
             response_bytes = name_bytes
-            response_obj = name_bytes.decode("ascii", errors="ignore")
+            response_obj = name_bytes.decode("ascii", errors="ignore") if name_bytes else None
         elif command == CMD_MEASURE:
+            # Ждем данные
+            time.sleep(0.1)
+            available = state.connection.in_waiting
+            logger.debug(f"Доступно байт: {available}")
             data = state.connection.read(22)
+            logger.debug(f"Получено: {data.hex()}")
             response_bytes = data
             response_obj = parse_measurement(data) if len(data) >= 20 else None
         else:
+            time.sleep(0.1)
             header = state.connection.read(2)
             response_bytes = header
             response_obj = len(header) == 2 and header[0] == 0xAA and header[1] == command
@@ -208,112 +219,181 @@ def send_command(command: int, params: bytes = b"") -> Union[bool, str, Dict, No
 
 def parse_measurement(data: bytes) -> Optional[Dict]:
     """Парсинг 22 байт данных измерения"""
-    if len(data) <= 10:
+    if len(data) < 20:
+        logger.warning(f"Недостаточно данных: {len(data)} байт")
         return None
 
     try:
+        # Логируем сырые данные для отладки
+        logger.debug(f"Сырые данные: {data.hex()}")
+
+        # Распаковываем структуру данных
+        # Согласно протоколу E7-28:
+        # Байт 0: флаги
+        # Байт 1: код режима
+        # Байт 2: код скорости
+        # Байт 3: код диапазона
+        # Байты 4-5: смещение (int16, little-endian)
+        # Байты 6-7: резерв
+        # Байты 8-11: частота (uint32, big-endian) в Гц
+        # Байты 12-15: модуль импеданса |Z| (float, big-endian) в Омах
+        # Байты 16-19: фаза (float, big-endian) в радианах
+
         flags = data[0]
         mode_code = data[1]
         speed_code = data[2]
         range_code = data[3]
-        # Смещение (int16)
-        bias_mv = struct.unpack("<h", data[4:6])[0] * 10
-        # Частота (uint32 big-endian, freq*100)
+
+        # Смещение (int16 little-endian, в мВ)
+        bias_mv = struct.unpack("<h", data[4:6])[0]
+
+        # Частота (uint32 big-endian) - уже в Гц, не нужно делить на 100
         freq = struct.unpack(">I", data[8:12])[0]
-        # |Z| (float big-endian)
+
+        # |Z| (float big-endian) в Омах
         z_mag = struct.unpack(">f", data[12:16])[0]
 
-        # Фаза (float big-endian, радианы → градусы)
+        # Фаза (float big-endian, радианы)
         phase_rad = struct.unpack(">f", data[16:20])[0]
-        phase_deg = phase_rad * 57.2957795
+        phase_deg = phase_rad * 180.0 / math.pi  # Конвертируем в градусы
 
+        # Вычисляем R и X
         R_val = z_mag * math.cos(phase_rad)
         X_val = z_mag * math.sin(phase_rad)
 
-        mode_map = {0: "L", 1: "C", 2: "R", 3: "Z", 4: "Y", 5: "Q", 6: "D", 7: "θ"}
-        speed_map = {0: "fast", 1: "normal", 2: "average"}
+        # Отладочная информация
+        logger.debug(f"Частота: {freq} Гц, |Z|: {z_mag} Ом, фаза: {phase_deg}°, R: {R_val}, X: {X_val}")
 
-        # Вычисление значения в зависимости от режима
+        # Маппинг кодов режимов
+        mode_map = {
+            0: "L",  # Индуктивность
+            1: "C",  # Емкость
+            2: "R",  # Сопротивление
+            3: "Z",  # Импеданс
+            4: "Y",  # Адмиттанс
+            5: "Q",  # Добротность
+            6: "D",  # Коэффициент диссипации
+            7: "θ",  # Фазовый угол
+        }
+
+        # Маппинг скоростей
+        speed_map = {
+            0: "fast",
+            1: "normal",
+            2: "average",
+        }
+
+        # Вычисляем значение в зависимости от режима
         value, unit = None, "Ω"
-        if mode_code == 0:  # L
-            value = z_mag / (2 * 3.14159265 * freq) if freq != 0 else 0
-            unit = "H"
-        elif mode_code == 1:  # C
-            value = 1 / (z_mag * 2 * 3.14159265 * freq) if z_mag != 0 and freq != 0 else 0
-            unit = "F"
-        elif mode_code in (2, 3):  # R или Z
+        if mode_code == 0:  # Индуктивность L
+            if freq > 0:
+                value = z_mag / (2 * math.pi * freq)  # L = |Z| / (2πf)
+                unit = "H"
+            else:
+                value = 0
+                unit = "H"
+        elif mode_code == 1:  # Емкость C
+            if freq > 0 and z_mag > 0:
+                value = 1 / (2 * math.pi * freq * z_mag)  # C = 1 / (2πf|Z|)
+                unit = "F"
+            else:
+                value = 0
+                unit = "F"
+        elif mode_code in (2, 3):  # Сопротивление R или импеданс Z
             value = z_mag
             unit = "Ω"
-        elif mode_code == 7:  # θ
+        elif mode_code == 7:  # Фазовый угол θ
             value = phase_deg
             unit = "°"
         else:
             value = z_mag
             unit = "Ω"
 
-        measurement = {
-            "id": state._last_measurement_id,
-            "timestamp": datetime.now().isoformat(timespec="milliseconds"),
-            "mode_code": mode_code,
-            "mode": mode_map.get(mode_code, "unknown"),
-            "frequency": round(freq, 2),
-            "z_mag": round(z_mag, 6),
-            "phase_rad": round(phase_rad, 6),
-            "phase_deg": round(phase_deg, 4),
-            "R": round(R_val, 6),
-            "X": round(X_val, 6),
-            "bias_mv": bias_mv,
-            "speed": speed_map.get(speed_code, "unknown"),
-            "range": f"{10**(7-range_code)} Ω" if range_code < 8 else "auto",
-            "flags": f"{bin(flags)}",
-            "value": round(value, 6) if value is not None else None,
-            "unit": unit,
-        }
+        # Создаем запись измерения
+        with state._measurements_lock:
+            measurement = {
+                "id": state._last_measurement_id,
+                "timestamp": datetime.now().isoformat(timespec="milliseconds"),
+                "mode_code": mode_code,
+                "mode": mode_map.get(mode_code, "unknown"),
+                "frequency": freq,  # Частота в Гц
+                "z_mag": z_mag,  # Модуль импеданса в Омах
+                "phase_rad": phase_rad,
+                "phase_deg": phase_deg,
+                "R": R_val,  # Активная составляющая
+                "X": X_val,  # Реактивная составляющая
+                "abs_X": abs(X_val),  # Модуль реактивной составляющей
+                "bias_mv": bias_mv,
+                "speed": speed_map.get(speed_code, "unknown"),
+                "range": f"Range {range_code}" if range_code < 8 else "auto",
+                "flags": f"0x{flags:02x}",
+                "value": value,
+                "unit": unit,
+            }
 
-        state._last_measurement_id += 1
+            state._last_measurement_id += 1
+
+            # Логируем для проверки
+            logger.info(f"Измерение: f={freq} Гц, |Z|={z_mag:.2f} Ом, R={R_val:.2f} Ом, X={X_val:.2f} Ом")
 
         return measurement
 
+    except struct.error as e:
+        logger.error(f"Ошибка распаковки структуры: {e}")
+        logger.error(f"Данные: {data.hex()}")
+        return None
     except Exception as e:
         logger.error(f"Ошибка анализа измерения: {str(e)}")
+        import traceback
+
+        logger.error(traceback.format_exc())
         return None
 
 
 def get_available_ports() -> List[str]:
     """Получить список доступных последовательных портов"""
-    a = [port.device for port in serial.tools.list_ports.comports()]
-    logger.info(f" Список портов COM - {a}")
-    return a
+    ports = [port.device for port in serial.tools.list_ports.comports()]
+    logger.info(f"Список портов COM - {ports}")
+    return ports
 
 
 def perform_measurements():
     """Выполнить измерения согласно настройкам"""
+    logger.info("Начало измерений...")
+
+    # Сбрасываем событие остановки
+    state._stop_event.clear()
+
     f_start = state.config.frequency_start
     f_end = state.config.frequency_end
+    points = max(state.config.points, 1)
 
-    state.measurements.clear()
+    with state._measurements_lock:
+        state.measurements.clear()
 
     # Режим 1: одинаковые частоты - опрашиваем прибор N раз
     if f_start == f_end:
-        logger.info(f"Режим 1: измерение на одной частоте {f_start} Гц")
-        # Устанавливаем частоту
-        send_command(CMD_SET_FREQ, struct.pack(">I", int(f_start)))
-        time.sleep(0.05)
+        logger.info(f"Режим 1: измерение на частоте {f_start} Гц, {points} точек")
 
-        # Определяем количество измерений
-        if state.config.points > 0:
-            n_points = state.config.points
-        else:
-            n_points = 1
+        # Устанавливаем частоту (без умножения на 100!)
+        result = send_command(CMD_SET_FREQ, struct.pack(">I", int(f_start)))  # Только частота в Гц
+        if result is None:
+            logger.error("Не удалось установить частоту")
+            state.is_measuring = False
+            return
+
+        time.sleep(0.2)  # Даем время прибору установить частоту
 
         # Выполняем N измерений
-        for i in range(n_points):
-            if not state.is_measuring:
+        for i in range(points):
+            if state._stop_event.is_set() or not state.is_measuring:
                 break
+
             measurement = send_command(CMD_MEASURE)
             if measurement:
-                state.measurements.append(measurement)
-            time.sleep(0.05)
+                with state._measurements_lock:
+                    state.measurements.append(measurement)
+            time.sleep(0.1)
 
     # Режим 2: разные частоты - строим список и идем по нему
     else:
@@ -321,11 +401,10 @@ def perform_measurements():
 
         # Генерация списка частот
         freqs = []
-        if state.config.points > 1:
+        if points > 1:
             # Равномерное распределение по точкам
-            n = state.config.points
-            step = (f_end - f_start) / (n - 1)
-            freqs = [f_start + i * step for i in range(n)]
+            step = (f_end - f_start) / (points - 1)
+            freqs = [f_start + i * step for i in range(points)]
         else:
             # По шагу
             step = max(state.config.frequency_step, 1.0)
@@ -341,18 +420,23 @@ def perform_measurements():
 
         # Проход по всем частотам
         for freq in freqs:
-            if not state.is_measuring:
+            if state._stop_event.is_set() or not state.is_measuring:
                 break
 
-            # Устанавливаем частоту
-            send_command(CMD_SET_FREQ, struct.pack(">I", int(freq)))
-            time.sleep(0.05)
+            # Устанавливаем частоту (без умножения на 100!)
+            result = send_command(CMD_SET_FREQ, struct.pack(">I", int(freq)))  # Только частота в Гц
+            if result is None:
+                logger.error(f"Не удалось установить частоту {freq} Гц")
+                continue
+
+            time.sleep(0.2)  # Даем время прибору установить частоту
 
             # Выполняем измерение
             measurement = send_command(CMD_MEASURE)
             if measurement:
-                state.measurements.append(measurement)
-            time.sleep(0.05)
+                with state._measurements_lock:
+                    state.measurements.append(measurement)
+            time.sleep(0.1)
 
     state.is_measuring = False
     logger.info(f"Измерения завершены. Получено {len(state.measurements)} точек")
@@ -361,7 +445,7 @@ def perform_measurements():
 @app.route("/")
 def index():
     """Главная страница"""
-    return render_template("main.html", ports=get_available_ports())
+    return render_template("index.html", ports=get_available_ports())
 
 
 @app.route("/connect", methods=["POST"])
@@ -374,15 +458,12 @@ def connect():
         return jsonify({"success": False, "message": "Порт не выбран"})
 
     try:
-        # Парсим baudrate
         baudrate = int(baudrate_str) if baudrate_str.isdigit() else DEFAULT_BAUDRATE
     except ValueError:
         baudrate = DEFAULT_BAUDRATE
 
     try:
-        logger.info(port)
         success, message = connect_to_meter(port, baudrate)
-        logger.info(port)
         response = {"success": success, "message": message}
 
         if success:
@@ -390,7 +471,7 @@ def connect():
 
         return jsonify(response)
     except Exception as e:
-        logger.error(e)
+        logger.error(f"Ошибка подключения: {e}")
         return jsonify({"success": False, "message": str(e)})
 
 
@@ -440,56 +521,76 @@ def handle_config():
                 "sweep_enabled": state.config.sweep_enabled,
             }
         )
-    else:
+
+    else:  # POST
         try:
-            state.config.frequency = float(request.form.get("frequency", 1000))
-            state.config.mode = request.form.get("mode", "Z")
-            state.config.speed = request.form.get("speed", "normal")
-            state.config.range = request.form.get("range", "auto")
-            state.config.bias_voltage = float(request.form.get("bias_voltage", 0))
+            # Получаем данные из формы или JSON
+            if request.content_type and "application/json" in request.content_type:
+                data = request.get_json()
+            else:
+                data = request.form.to_dict()
 
-            # Sweep parameters
-            try:
-                state.config.frequency_start = float(request.form.get("frequency_start", state.config.frequency_start))
-            except (TypeError, ValueError):
-                state.config.frequency_start = state.config.frequency_start
+            logger.info(f"Получены данные конфигурации: {data}")
 
-            try:
-                state.config.frequency_end = float(request.form.get("frequency_end", state.config.frequency_end))
-            except (TypeError, ValueError):
-                state.config.frequency_end = state.config.frequency_end
+            # Обновляем конфигурацию
+            if "frequency_start" in data:
+                state.config.frequency_start = float(data.get("frequency_start", state.config.frequency_start))
+            if "frequency_end" in data:
+                state.config.frequency_end = float(data.get("frequency_end", state.config.frequency_end))
+            if "frequency_step" in data:
+                state.config.frequency_step = float(data.get("frequency_step", state.config.frequency_step))
+            if "points" in data:
+                points_val = data.get("points")
+                if points_val is not None and str(points_val).strip() != "":
+                    state.config.points = int(points_val)
+                else:
+                    state.config.points = 0
+            if "mode" in data:
+                state.config.mode = data.get("mode", state.config.mode)
+            if "speed" in data:
+                state.config.speed = data.get("speed", state.config.speed)
+            if "range" in data:
+                state.config.range = data.get("range", state.config.range)
+            if "bias_voltage" in data:
+                state.config.bias_voltage = float(data.get("bias_voltage", state.config.bias_voltage))
 
-            try:
-                state.config.frequency_step = float(request.form.get("frequency_step", state.config.frequency_step))
-            except (TypeError, ValueError):
-                state.config.frequency_step = state.config.frequency_step
-
-            try:
-                points_val = request.form.get("points", "")
-                state.config.points = int(points_val) if str(points_val).strip() != "" else state.config.points
-            except (TypeError, ValueError):
-                state.config.points = state.config.points
-
-            sweep_val = str(request.form.get("sweep_enabled", "")).lower()
-            state.config.sweep_enabled = sweep_val in ("1", "true", "on", "yes")
-
-            # If points > 1, compute frequency_step
-            if state.config.points and state.config.points > 1:
-                span = float(state.config.frequency_end) - float(state.config.frequency_start)
+            # Если points > 1 и частоты разные, пересчитываем шаг
+            if state.config.points > 1 and state.config.frequency_start != state.config.frequency_end:
+                span = state.config.frequency_end - state.config.frequency_start
                 state.config.frequency_step = span / (state.config.points - 1)
 
+            # Применяем настройки к прибору, если подключен
             if state.connection and state.connection.is_open:
-                # Set frequency
+                # Устанавливаем начальную частоту (без умножения на 100!)
                 freq_bytes = struct.pack(">I", int(state.config.frequency_start))
                 send_command(CMD_SET_FREQ, freq_bytes)
 
-                # Set bias voltage
-                bias_int16 = int(state.config.bias_voltage / 10)
+                # Устанавливаем смещение
+                bias_int16 = int(state.config.bias_voltage)
                 bias_bytes = struct.pack("<h", bias_int16)
                 send_command(CMD_SET_BIAS, bias_bytes)
 
-            return jsonify({"success": True, "message": "Настройки применены"})
+            logger.info(
+                f"Конфигурация обновлена: start={state.config.frequency_start}, "
+                f"end={state.config.frequency_end}, step={state.config.frequency_step}, "
+                f"points={state.config.points}"
+            )
+
+            return jsonify(
+                {
+                    "success": True,
+                    "message": "Настройки применены",
+                    "config": {
+                        "frequency_start": state.config.frequency_start,
+                        "frequency_end": state.config.frequency_end,
+                        "frequency_step": state.config.frequency_step,
+                        "points": state.config.points,
+                    },
+                }
+            )
+
         except Exception as e:
+            logger.error(f"Ошибка обновления конфигурации: {str(e)}")
             return jsonify({"success": False, "message": str(e)})
 
 
@@ -502,12 +603,17 @@ def control_measurements():
             return jsonify({"success": False, "message": "Нет подключения к прибору"})
 
         state.is_measuring = True
-        # Запускаем измерения в отдельном потоке, чтобы не блокировать веб-интерфейс
-        threading.Thread(target=perform_measurements, daemon=True).start()
+        # Сбрасываем событие остановки
+        state._stop_event.clear()
+        # Запускаем измерения в отдельном потоке
+        thread = threading.Thread(target=perform_measurements, daemon=True)
+        thread.start()
         return jsonify({"success": True, "message": "Измерение запущено"})
 
     elif action == "stop":
         state.is_measuring = False
+        # Устанавливаем событие остановки
+        state._stop_event.set()
         return jsonify({"success": True, "message": "Остановка измерения"})
 
     else:
@@ -517,9 +623,16 @@ def control_measurements():
 @app.route("/measurements", methods=["GET"])
 def get_measurements():
     """Получить данные измерений"""
+    # Если измерения не выполняются, но интервал продолжает опрашивать, возвращаем пустой результат
+    if not state.is_measuring and not state.measurements:
+        return jsonify({"measurements": [], "is_measuring": False, "last_id": state._last_measurement_id - 1})
+
+    with state._measurements_lock:
+        measurements_copy = state.measurements.copy()
+
     return jsonify(
         {
-            "measurements": state.measurements,
+            "measurements": measurements_copy,
             "is_measuring": state.is_measuring,
             "last_id": state._last_measurement_id - 1,
         }
@@ -529,31 +642,33 @@ def get_measurements():
 @app.route("/export", methods=["GET"])
 def export_data():
     """Экспорт данных в CSV"""
-    if not state.measurements:
-        return jsonify({"success": False, "message": "Нет данных для экспорта"})
+    with state._measurements_lock:
+        if not state.measurements:
+            return jsonify({"success": False, "message": "Нет данных для экспорта"})
+
+        measurements_copy = state.measurements.copy()
 
     output = io.StringIO()
     fieldnames = [
         "timestamp",
-        "mode",
-        "mode_code",
-        "value",
-        "unit",
         "frequency",
         "z_mag",
         "phase_deg",
-        "phase_rad",
+        "R",
+        "X",
+        "abs_X",
+        "mode",
+        "value",
+        "unit",
         "bias_mv",
         "speed",
-        "X",
-        "R",
         "range",
         "flags",
     ]
 
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
-    writer.writerows(state.measurements)
+    writer.writerows(measurements_copy)
 
     output.seek(0)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
