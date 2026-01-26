@@ -18,8 +18,8 @@ def open_browser():
     """Открывает браузер через 1 секунду"""
     time.sleep(1.5)
     try:
-        webbrowser.open("http://localhost:5000")
-        print("Браузер открыт: http://localhost:5000")
+        webbrowser.open("http://localhost:5001")
+        print("Браузер открыт: http://localhost:5001")
     except Exception as e:
         print(f"Не удалось открыть браузер: {e}")
 
@@ -36,7 +36,7 @@ if __name__ == "__main__":
 
     # Запускаем веб-сервер
     try:
-        service.app.run(host="127.0.0.1", port=5000, debug=False, threaded=True, use_reloader=False)
+        service.app.run(host="127.0.0.1", port=5001, debug=False, threaded=True, use_reloader=False)
     except KeyboardInterrupt:
         print("\nСервер остановлен пользователем")
     except Exception as e:

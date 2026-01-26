@@ -129,11 +129,14 @@
                  <div style="display: flex; gap: 10px; margin-bottom: 15px;">
                     <div style="flex: 1;">
                         <label for="port-select">COM порт:</label>
-                        <select id="port-select">
-                            {% for port in ports %}
-                            <option value="{{ port }}">{{ port }}</option>
-                            {% endfor %}
-                        </select>
+                        <div style="display: flex; gap: 5px;">
+                            <select id="port-select" style="flex: 1;">
+                                {% for port in ports %}
+                                <option value="{{ port }}">{{ port }}</option>
+                                {% endfor %}
+                            </select>
+                            <button id="refresh-ports-btn" style="width: 45px; padding: 8px; flex: 0;" title="Обновить список портов">🔄</button>
+                        </div>
                     </div>
                     <div style="flex: 1;">
                         <label for="baudrate">Скорость (baud):</label>
@@ -469,16 +472,52 @@
             // Инициализация графиков
             initCharts();
         
+            // Обновление списка портов
+            function refreshPorts() {
+                $('#refresh-ports-btn').prop('disabled', true);
+                $.get('/ports', function(response) {
+                    const select = $('#port-select');
+                    const currentValue = select.val();
+                    select.empty();
+                    
+                    if (response.ports && response.ports.length > 0) {
+                        response.ports.forEach(port => {
+                            select.append(`<option value="${port}">${port}</option>`);
+                        });
+                        // Восстанавливаем предыдущий выбор если возможно
+                        if (response.ports.includes(currentValue)) {
+                            select.val(currentValue);
+                        }
+                    } else {
+                        select.append('<option value="">Портов не найдено</option>');
+                    }
+                }).always(function() {
+                    $('#refresh-ports-btn').prop('disabled', false);
+                });
+            }
+            
+            $('#refresh-ports-btn').click(function() {
+                refreshPorts();
+            });
+        
             // Подключение
             $('#connect-btn').click(function() {
                 const port = $('#port-select').val();
                 const baudrate = $('#baudrate').val();
+                
+                if (!port) {
+                    alert('Пожалуйста, выберите COM порт');
+                    return;
+                }
+                
+                $('#connect-btn').prop('disabled', true);
+                
                 $.post('/connect', { port: port, baudrate: baudrate }, function(response) {
                     if (response.success) {
                         $('#connection-status')
                             .removeClass('disconnected')
                             .addClass('connected')
-                            .text('Подключено к ' + port);
+                            .text('✓ Подключено к ' + port);
                         $('#connect-btn').prop('disabled', true);
                         $('#disconnect-btn').prop('disabled', false);
                         if (response.device_info) {
@@ -488,9 +527,21 @@
                             `);
                         }
                     } else {
-                        alert('Ошибка подключения: ' + response.message);
+                        $('#connection-status')
+                            .removeClass('connected')
+                            .addClass('disconnected')
+                            .text('✗ Ошибка: ' + response.message);
+                        $('#connect-btn').prop('disabled', false);
+                        alert('Ошибка подключения:\n\n' + response.message);
                     }
-                }).fail(() => alert('Не удалось отправить запрос на подключение'));
+                }).fail(function(xhr) {
+                    $('#connection-status')
+                        .removeClass('connected')
+                        .addClass('disconnected')
+                        .text('✗ Ошибка соединения');
+                    $('#connect-btn').prop('disabled', false);
+                    alert('Не удалось отправить запрос на подключение:\n' + xhr.statusText);
+                });
             });
         
             $('#disconnect-btn').click(function() {
