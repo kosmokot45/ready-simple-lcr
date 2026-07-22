@@ -99,6 +99,8 @@ class DeviceConfig:
     frequency_step: float = 100.0  # Шаг по умолчанию 100 Гц
     sweep_enabled: bool = False
     points: int = 100
+    log_sweep: bool = False       # Логарифмическая развёртка
+    points_per_decade: int = 10   # Точек на декаду в лог-режиме
 
 
 class MeterState:
@@ -173,13 +175,12 @@ def send_command(command: int, params: bytes = b"") -> Union[bool, str, Dict, No
     try:
         packet = bytes([0xAA, command]) + params
         logger.debug(f"Отправка: {packet.hex()}")
-        state.connection.write(packet)
-        time.sleep(0.05)  # Увеличим задержку
 
         response_bytes = None
 
-        # Получаем "сырые" байты ответа для лога
         if command == CMD_GET_NAME:
+            state.connection.write(packet)
+            time.sleep(0.05)
             name_bytes = b""
             start_time = time.time()
             while time.time() - start_time < 2:
@@ -192,16 +193,29 @@ def send_command(command: int, params: bytes = b"") -> Union[bool, str, Dict, No
                     time.sleep(0.01)
             response_bytes = name_bytes
             response_obj = name_bytes.decode("ascii", errors="ignore") if name_bytes else None
+
         elif command == CMD_MEASURE:
-            # Ждем данные
-            time.sleep(0.1)
+            # Дренируем буфер ДО отправки команды — убираем любые авто-пакеты
+            # которые устройство прислало пока мы ждали после SET_FREQ
+            time.sleep(0.03)
+            state.connection.reset_input_buffer()
+            # Теперь отправляем CMD_MEASURE и читаем ответ именно на неё
+            state.connection.write(packet)
+            time.sleep(0.15)
             available = state.connection.in_waiting
             logger.debug(f"Доступно байт: {available}")
             data = state.connection.read(22)
             logger.debug(f"Получено: {data.hex()}")
+            # Дренируем возможный хвост
+            time.sleep(0.03)
+            if state.connection.in_waiting > 0:
+                extra = state.connection.read(state.connection.in_waiting)
+                logger.debug(f"Дренаж хвоста: {len(extra)} байт")
             response_bytes = data
             response_obj = parse_measurement(data) if len(data) >= 20 else None
+
         else:
+            state.connection.write(packet)
             time.sleep(0.1)
             header = state.connection.read(2)
             response_bytes = header
@@ -364,6 +378,13 @@ def perform_measurements():
     # Сбрасываем событие остановки
     state._stop_event.clear()
 
+    # Очищаем буфер порта перед началом
+    if state.connection and state.connection.is_open:
+        state.connection.reset_input_buffer()
+        state.connection.reset_output_buffer()
+        time.sleep(0.4)  # Ждём пока устройство досошлёт всё "в пути"
+        state.connection.reset_input_buffer()  # Сбрасываем уже пришедшее
+
     f_start = state.config.frequency_start
     f_end = state.config.frequency_end
     points = max(state.config.points, 1)
@@ -397,12 +418,20 @@ def perform_measurements():
 
     # Режим 2: разные частоты - строим список и идем по нему
     else:
-        logger.info(f"Режим 2: sweep от {f_start} до {f_end} Гц")
+        logger.info(f"Режим 2: sweep от {f_start} до {f_end} Гц, лог={state.config.log_sweep}")
 
         # Генерация списка частот
         freqs = []
-        if points > 1:
-            # Равномерное распределение по точкам
+
+        if state.config.log_sweep and f_start > 0 and f_end > f_start:
+            # Логарифмическая развёртка: равномерно в логарифмическом масштабе
+            decades = math.log10(f_end / f_start)
+            N = max(2, round(decades * state.config.points_per_decade) + 1)
+            freqs = [f_start * (f_end / f_start) ** (i / (N - 1)) for i in range(N)]
+            logger.info(f"Лог-режим: {decades:.2f} декад × {state.config.points_per_decade} = {N} точек")
+
+        elif points > 1:
+            # Линейное равномерное распределение по числу точек
             step = (f_end - f_start) / (points - 1)
             freqs = [f_start + i * step for i in range(points)]
         else:
@@ -418,25 +447,36 @@ def perform_measurements():
 
         logger.info(f"Сгенерировано {len(freqs)} частот для sweep")
 
-        # Проход по всем частотам
+        # Прогрев: устанавливаем первую частоту и делаем ДВА холостых измерения,
+        # чтобы гарантированно вытолкнуть конвейер (устройство имеет задержку ~1 цикл).
+        if freqs and state.connection and state.connection.is_open:
+            state.connection.reset_input_buffer()
+            send_command(CMD_SET_FREQ, struct.pack(">I", int(freqs[0])))
+            time.sleep(0.8)
+            send_command(CMD_MEASURE)  # холостое #1
+            time.sleep(0.6)
+            send_command(CMD_MEASURE)  # холостое #2
+            logger.info(f"Прогрев завершён на {int(freqs[0])} Гц")
+
+        # Проход по всем частотам.
+        # Не проверяем совпадение частоты — устройство возвращает реальную частоту,
+        # на которой делалось измерение; используем её как есть.
         for freq in freqs:
             if state._stop_event.is_set() or not state.is_measuring:
                 break
 
-            # Устанавливаем частоту (без умножения на 100!)
-            result = send_command(CMD_SET_FREQ, struct.pack(">I", int(freq)))  # Только частота в Гц
+            state.connection.reset_input_buffer()
+            result = send_command(CMD_SET_FREQ, struct.pack(">I", int(freq)))
             if result is None:
-                logger.error(f"Не удалось установить частоту {freq} Гц")
+                logger.error(f"Не удалось установить частоту {freq} Гц — пропускаем")
                 continue
 
-            time.sleep(0.2)  # Даем время прибору установить частоту
+            time.sleep(0.6)  # ждём как минимум 1.5 цикла измерения
 
-            # Выполняем измерение
             measurement = send_command(CMD_MEASURE)
             if measurement:
                 with state._measurements_lock:
                     state.measurements.append(measurement)
-            time.sleep(0.1)
 
     state.is_measuring = False
     logger.info(f"Измерения завершены. Получено {len(state.measurements)} точек")
@@ -458,8 +498,8 @@ def connect():
         return jsonify({"success": False, "message": "Порт не выбран"})
 
     try:
-        baudrate = int(baudrate_str) if baudrate_str.isdigit() else DEFAULT_BAUDRATE
-    except ValueError:
+        baudrate = int(float(baudrate_str)) if baudrate_str and baudrate_str.strip() else DEFAULT_BAUDRATE
+    except (ValueError, TypeError):
         baudrate = DEFAULT_BAUDRATE
 
     try:
@@ -519,6 +559,8 @@ def handle_config():
                 "frequency_step": state.config.frequency_step,
                 "points": state.config.points,
                 "sweep_enabled": state.config.sweep_enabled,
+                "log_sweep": state.config.log_sweep,
+                "points_per_decade": state.config.points_per_decade,
             }
         )
 
@@ -553,22 +595,27 @@ def handle_config():
                 state.config.range = data.get("range", state.config.range)
             if "bias_voltage" in data:
                 state.config.bias_voltage = float(data.get("bias_voltage", state.config.bias_voltage))
+            if "log_sweep" in data:
+                v = data.get("log_sweep")
+                state.config.log_sweep = v in (True, "true", "1", 1)
+            if "points_per_decade" in data:
+                ppd = data.get("points_per_decade")
+                if ppd is not None and str(ppd).strip() != "":
+                    state.config.points_per_decade = max(1, int(ppd))
 
-            # Если points > 1 и частоты разные, пересчитываем шаг
-            if state.config.points > 1 and state.config.frequency_start != state.config.frequency_end:
+            # Если points > 1 и частоты разные, пересчитываем шаг (только в линейном режиме)
+            if not state.config.log_sweep and state.config.points > 1 and state.config.frequency_start != state.config.frequency_end:
                 span = state.config.frequency_end - state.config.frequency_start
                 state.config.frequency_step = span / (state.config.points - 1)
 
             # Применяем настройки к прибору, если подключен
             if state.connection and state.connection.is_open:
-                # Устанавливаем начальную частоту (без умножения на 100!)
-                freq_bytes = struct.pack(">I", int(state.config.frequency_start))
-                send_command(CMD_SET_FREQ, freq_bytes)
-
-                # Устанавливаем смещение
+                # Устанавливаем смещение (без SET_FREQ — частота будет установлена при старте измерений)
                 bias_int16 = int(state.config.bias_voltage)
                 bias_bytes = struct.pack("<h", bias_int16)
                 send_command(CMD_SET_BIAS, bias_bytes)
+                # Очищаем буфер после конфига
+                state.connection.reset_input_buffer()
 
             logger.info(
                 f"Конфигурация обновлена: start={state.config.frequency_start}, "
@@ -601,6 +648,9 @@ def control_measurements():
     if action == "start":
         if not state.connection or not state.connection.is_open:
             return jsonify({"success": False, "message": "Нет подключения к прибору"})
+
+        if state.is_measuring:
+            return jsonify({"success": False, "message": "Измерение уже выполняется"})
 
         state.is_measuring = True
         # Сбрасываем событие остановки

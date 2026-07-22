@@ -1,4 +1,5 @@
 # fake_lcr_meter.py
+import math
 import serial
 import time
 import struct
@@ -62,10 +63,10 @@ class FakeLCR:
                 freq_bytes = data[2:6]
                 # accept both big-endian and little-endian encodings
                 try:
-                    self.frequency = struct.unpack(">I", freq_bytes)[0] / 100.0
+                    self.frequency = struct.unpack(">I", freq_bytes)[0]
                 except struct.error:
                     try:
-                        self.frequency = struct.unpack("<I", freq_bytes)[0] / 100.0
+                        self.frequency = struct.unpack("<I", freq_bytes)[0]
                     except struct.error:
                         pass
             return self._response(cmd)
@@ -243,10 +244,11 @@ def main():
 
                 cmd = header[1]
                 params = b""
-                # Читаем параметры, ели они есть
-                if cmd == CMD_SET_FREQ and ser.in_waiting >= 4:
+                # Читаем параметры блокирующим read (не in_waiting — при 9600 baud
+                # байты ещё могут быть в пути когда мы дошли до этой проверки)
+                if cmd == CMD_SET_FREQ:
                     params = ser.read(4)
-                elif cmd == CMD_SET_BIAS and ser.in_waiting >= 2:
+                elif cmd == CMD_SET_BIAS:
                     params = ser.read(2)
 
                 full_command = header + params

@@ -10,8 +10,53 @@
         body {
             font-family: Arial, sans-serif;
             margin: 0;
-            padding: 20px;
+            padding: 0;
             background-color: #f5f5f5;
+        }
+        .top-bar {
+            background: #2c3e50;
+            color: white;
+            padding: 8px 20px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .top-bar .top-bar-title {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #ecf0f1;
+            margin-right: 10px;
+            white-space: nowrap;
+        }
+        .top-bar-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .top-bar-item label {
+            font-size: 0.85em;
+            color: #bdc3c7;
+            font-weight: normal;
+            margin: 0;
+            white-space: nowrap;
+        }
+        .top-bar-item select {
+            width: auto;
+            padding: 4px 8px;
+            font-size: 0.9em;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: #34495e;
+            color: white;
+            cursor: pointer;
+        }
+        .top-bar-item select:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+        .main-content {
+            padding: 20px;
         }
         .container {
             display: flex;
@@ -116,12 +161,110 @@
             background-color: #e7f3fe;
             border-radius: 4px;
         }
+
+        /* Переключалка Линейный / Логарифмический */
+        .sweep-toggle-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            padding: 8px 10px;
+            background: #f0f4ff;
+            border-radius: 6px;
+            border: 1px solid #d0d8f0;
+        }
+        .sweep-toggle-row .toggle-label {
+            font-size: 0.85em;
+            color: #555;
+            font-weight: normal;
+        }
+        .sweep-toggle-row .toggle-label.active {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 46px;
+            height: 24px;
+            flex-shrink: 0;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #3498db;
+            border-radius: 24px;
+            transition: .3s;
+        }
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            border-radius: 50%;
+            transition: .3s;
+        }
+        input:checked + .toggle-slider {
+            background-color: #e67e22;
+        }
+        input:checked + .toggle-slider:before {
+            transform: translateX(22px);
+        }
+        .log-hint {
+            font-size: 0.78em;
+            color: #888;
+            margin-top: 4px;
+        }
     </style>
 </head>
 <body>
+    <!-- Верхняя строка с быстрыми настройками -->
+    <div class="top-bar">
+        <span class="top-bar-title">LCR Meter E7-28</span>
+        <div class="top-bar-item">
+            <label for="speed-top">⚡ Скорость:</label>
+            <select id="speed-top">
+                <option value="fast">Fast</option>
+                <option value="normal" selected>Normal</option>
+                <option value="average">Average</option>
+            </select>
+        </div>
+        <div class="top-bar-item">
+            <label for="mode-top">📐 Режим:</label>
+            <select id="mode-top">
+                <option value="Z">Impedance (Z)</option>
+                <option value="L">Inductance (L)</option>
+                <option value="C">Capacitance (C)</option>
+                <option value="R">Resistance (R)</option>
+                <option value="θ">Phase (θ)</option>
+            </select>
+        </div>
+        <div class="top-bar-item">
+            <label for="range-top">📊 Диапазон:</label>
+            <select id="range-top">
+                <option value="auto" selected>Auto</option>
+                <option value="10M">10 MΩ</option>
+                <option value="1M">1 MΩ</option>
+                <option value="100K">100 KΩ</option>
+                <option value="10K">10 KΩ</option>
+                <option value="1K">1 KΩ</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="main-content">
     <div class="container">
         <div class="panel">
-            <h1>LCR Meter E7-28</h1>
+            <h1 style="display:none">LCR Meter E7-28</h1>
             
             <div class="control-group">
                 <h2>Подключение</h2>
@@ -147,57 +290,66 @@
                 <div id="device-info" class="device-info"></div>
             </div>
             
-            <div class="control-group">
-                <h2>Настройки измерения</h2>
+            <!-- Скрытые поля — синхронизируются с top-bar -->
+            <input type="hidden" id="mode">
+            <input type="hidden" id="speed">
+            <input type="hidden" id="range">
 
-                <div style="margin-top:10px; border:1px dashed #eee; border-radius:6px;">
-                    <div style="display:flex; gap:4px; margin-top:8px;">
+            <div class="control-group">
+                <h2>Настройки частоты</h2>
+
+                <!-- Диапазон частот -->
+                <div style="display:flex; gap:6px; margin-bottom:10px;">
+                    <div style="flex:1;">
+                        <label for="frequency_start">Начало (Гц):</label>
+                        <input type="number" id="frequency_start" value="1000" min="1">
+                    </div>
+                    <div style="flex:1;">
+                        <label for="frequency_end">Конец (Гц):</label>
+                        <input type="number" id="frequency_end" value="50000" min="1">
+                    </div>
+                </div>
+
+                <!-- Переключалка режима развёртки -->
+                <div class="sweep-toggle-row">
+                    <span class="toggle-label active" id="label-linear">Линейный</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="log_sweep">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="toggle-label" id="label-log">Логарифмический</span>
+                </div>
+
+                <!-- Линейный режим: шаг и точки -->
+                <div id="linear-fields" style="display:flex; gap:6px; margin-bottom:6px;">
+                    <div style="flex:1;">
+                        <label for="frequency_step">Шаг (Гц):</label>
+                        <input type="number" id="frequency_step" value="100" min="0" step="0.1">
+                    </div>
+                    <div style="flex:1;">
+                        <label for="points">Кол. точек:</label>
+                        <input type="number" id="points" value="0" min="0" step="1">
+                    </div>
+                </div>
+                <div id="linear-hint" style="margin-bottom:8px;">
+                    <small style="color:#666;">Если <strong>Кол. точек &gt; 1</strong> — шаг рассчитывается автоматически.</small>
+                </div>
+
+                <!-- Логарифмический режим -->
+                <div id="log-fields" style="display:none; margin-bottom:6px;">
+                    <div style="display:flex; gap:6px; align-items:flex-end;">
                         <div style="flex:1;">
-                            <label for="frequency_start">Начало (Гц):</label>
-                            <input type="number" id="frequency_start" value="1000" min="1">
+                            <label for="points_per_decade">Точек на декаду:</label>
+                            <input type="number" id="points_per_decade" value="10" min="1" max="100" step="1">
                         </div>
-                        <div style="flex:1;">
-                            <label for="frequency_end">Конец (Гц):</label>
-                            <input type="number" id="frequency_end" value="50000" min="1">
-                        </div>
-                        <div style="flex:1;">
-                            <label for="frequency_step">Шаг (Гц):</label>
-                            <input type="number" id="frequency_step" value="100" min="0" step="0.1">
-                        </div>
-                        <div style="flex:1;">
-                            <label for="points">Кол. точек:</label>
-                            <input type="number" id="points" value="0" min="0" step="1">
+                        <div style="flex:1; padding-bottom:8px;">
+                            <span class="log-hint">≈ <strong id="log-points-preview">—</strong> точек</span>
                         </div>
                     </div>
-                    <small style="color:#666;">Если указано <strong>Кол. точек &gt; 1</strong>, шаг будет рассчитан автоматически.</small>
+                    <small class="log-hint">Частоты распределяются равномерно в логарифмическом масштабе.</small>
                 </div>
-                <label for="mode">Режим измерения:</label>
-                <select id="mode">
-                    <option value="Z">Impedance (Z)</option>
-                    <option value="L">Inductance (L)</option>
-                    <option value="C">Capacitance (C)</option>
-                    <option value="R">Resistance (R)</option>
-                    <option value="θ">Phase Angle (θ)</option>
-                </select>
-                
-                <label for="speed">Скорость измерения:</label>
-                <select id="speed">
-                    <option value="fast">Fast</option>
-                    <option value="normal" selected>Normal</option>
-                    <option value="average">Average</option>
-                </select>
-                
-                <label for="range">Диапазон измерения:</label>
-                <select id="range">
-                    <option value="auto" selected>Auto</option>
-                    <option value="10M">10 MΩ</option>
-                    <option value="1M">1 MΩ</option>
-                    <option value="100K">100 KΩ</option>
-                    <option value="10K">10 KΩ</option>
-                    <option value="1K">1 KΩ</option>
-                </select>
-                
-                <button id="update-config">Обновить настройки</button>
+
+                <button id="update-config">Применить настройки</button>
             </div>
 
 
@@ -256,6 +408,7 @@
             </div>
         </div>
     </div>
+    </div><!-- /main-content -->
 
     <script>
         let chartRX = null;
@@ -264,175 +417,110 @@
         let chartIm = null;
         let updateInterval = null;
         let isMeasuringLocally = false;
+        let allMeasurements = [];
+        let latestMeasurements = [];
 
-        let latestMeasurements = []; 
-        
+        // ─── Инициализация графиков ───────────────────────────────────────
         function initCharts() {
             if (chartRX) chartRX.destroy();
-            if (chartZ) chartZ.destroy();
+            if (chartZ)  chartZ.destroy();
             if (chartRe) chartRe.destroy();
             if (chartIm) chartIm.destroy();
-        
+
             const ctxRX = document.getElementById('chart-rx').getContext('2d');
-            const ctxZ = document.getElementById('chart-z').getContext('2d');
+            const ctxZ  = document.getElementById('chart-z').getContext('2d');
             const ctxRe = document.getElementById('chart-re').getContext('2d');
             const ctxIm = document.getElementById('chart-im').getContext('2d');
-        
+
             chartRX = new Chart(ctxRX, {
                 type: 'scatter',
-                data: {
-                    datasets: [{
-                        label: 'R–X (Годограф)',
-                        data: [],  // ← правильно: "data", а не просто "[]"
-                        borderColor: 'black',
-                        showLine: true,
-                        tension: 0.1
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: { title: { display: true, text: 'R (Ω)' } },
-                        y: { title: { display: true, text: 'X (Ω)' } }
-                    }
-                }
+                data: { datasets: [{ label: 'R–X (Годограф)', data: [], borderColor: 'black', showLine: true, tension: 0.1 }] },
+                options: { responsive: true, maintainAspectRatio: false,
+                    scales: { x: { title: { display: true, text: 'R (Ω)' } }, y: { title: { display: true, text: 'X (Ω)' } } } }
             });
-            
             chartZ = new Chart(ctxZ, {
                 type: 'line',
-                data: {
-                    labels: [],
-                    datasets: [{
-                        label: '|Z| (Ω)',
-                        data: [],
-                        borderColor: 'green',
-                        tension: 0.1,
-                        fill: false
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: { title: { display: true, text: 'Частота (Гц)' } },
-                        y: { title: { display: true, text: '|Z| (Ω)' } }
-                    }
-                }
+                data: { labels: [], datasets: [{ label: '|Z| (Ω)', data: [], borderColor: 'green', tension: 0.1, fill: false }] },
+                options: { responsive: true, maintainAspectRatio: false,
+                    scales: { x: { title: { display: true, text: 'Частота (Гц)' } }, y: { title: { display: true, text: '|Z| (Ω)' } } } }
             });
-        
             chartRe = new Chart(ctxRe, {
                 type: 'line',
-                data: {
-                    labels: [],
-                    datasets: [{
-                        label: 'Re(Z) = R (Ω)',
-                        data: [],
-                        borderColor: 'red',
-                        tension: 0.1,
-                        fill: false
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: { title: { display: true, text: 'Частота (Гц)' } },
-                        y: { title: { display: true, text: 'R (Ω)' } }
-                    }
-                }
+                data: { labels: [], datasets: [{ label: 'Re(Z) = R (Ω)', data: [], borderColor: 'red', tension: 0.1, fill: false }] },
+                options: { responsive: true, maintainAspectRatio: false,
+                    scales: { x: { title: { display: true, text: 'Частота (Гц)' } }, y: { title: { display: true, text: 'R (Ω)' } } } }
             });
-        
             chartIm = new Chart(ctxIm, {
                 type: 'line',
-                data: {
-                    labels: [],
-                    datasets: [{
-                        label: 'Im(Z) = X (Ω)',
-                        data: [],
-                        borderColor: 'blue',
-                        tension: 0.1,
-                        fill: false
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: { title: { display: true, text: 'Частота (Гц)' } },
-                        y: { title: { display: true, text: 'X (Ω)' } }
-                    }
-                }
+                data: { labels: [], datasets: [{ label: 'Im(Z) = X (Ω)', data: [], borderColor: 'blue', tension: 0.1, fill: false }] },
+                options: { responsive: true, maintainAspectRatio: false,
+                    scales: { x: { title: { display: true, text: 'Частота (Гц)' } }, y: { title: { display: true, text: 'X (Ω)' } } } }
             });
         }
-        
+
         function updateCharts(data) {
             if (!chartZ || !chartRe || !chartIm) return;
-        
-            const recent = data.slice(-100);
+            const recent = data.slice(-500);
             const freqs = recent.map(m => m.frequency || 0);
-            const zMag = recent.map(m => m.z_mag || 0);
-            const reZ = recent.map(m => m.R || 0);
-            const imZ = recent.map(m => m.X || 0);
-            const absimZ = recent.map(m => (m.X * -1 || 0));
+            const zMag  = recent.map(m => m.z_mag || 0);
+            const reZ   = recent.map(m => m.R || 0);
+            const imZ   = recent.map(m => m.X || 0);
+            const rxPts = reZ.map((r, i) => ({ x: r, y: Math.abs(imZ[i]) }));
 
-
-            const points = reZ.map((r, i) => ({
-                x: r,
-                y: Math.abs(imZ[i])
-            }));
-        
-            chartRX.data.datasets[0].data = points;
-            chartRX.update();
-            
-            chartZ.data.labels = freqs;
-            chartZ.data.datasets[0].data = zMag;
-            chartZ.update();
-        
-            chartRe.data.labels = freqs;
-            chartRe.data.datasets[0].data = reZ;
-            chartRe.update();
-        
-            chartIm.data.labels = freqs;
-            chartIm.data.datasets[0].data = imZ;
-            chartIm.update();
+            chartRX.data.datasets[0].data = rxPts; chartRX.update();
+            chartZ.data.labels = freqs;  chartZ.data.datasets[0].data = zMag; chartZ.update();
+            chartRe.data.labels = freqs; chartRe.data.datasets[0].data = reZ; chartRe.update();
+            chartIm.data.labels = freqs; chartIm.data.datasets[0].data = imZ; chartIm.update();
         }
-        
+
         function updateTable(data) {
             const tbody = $('#measurement-table tbody');
             tbody.empty();
-            const recent = data.reverse();
-            recent.forEach(m => {
-                tbody.append(`
-                    <tr>
-                        <td>${m.frequency || ''}</td>
-                        <td>${(m.z_mag || 0).toFixed(4)} </td> 
-                        <td>${(m.R || 0).toFixed(4)} </td> 
-                        <td>${(m.X || 0).toFixed(4)} </td> 
-                    </tr>
-                `);
+            data.slice().reverse().forEach(m => {
+                tbody.append(`<tr>
+                    <td>${m.frequency || ''}</td>
+                    <td>${(m.z_mag || 0).toFixed(4)}</td>
+                    <td>${(m.R || 0).toFixed(4)}</td>
+                    <td>${(m.X || 0).toFixed(4)}</td>
+                </tr>`);
             });
+            latestMeasurements = data;
         }
-        
-        function fetchMeasurements() {
-            $.get('/measurements', function(response) {
-                const data = response.measurements;
-                latestMeasurements = data;
-                updateCharts(data.slice(-100));
-                updateTable(data);
-                if (!response.is_measuring && isMeasuringLocally) {
-                    stopMeasurementUI();
-                }
-            });
-        }
-        
+
+        // ─── Опрос измерений ──────────────────────────────────────────────
         function startMeasurementUI() {
             isMeasuringLocally = true;
             $('#start-measure').prop('disabled', true);
             $('#stop-measure').prop('disabled', false);
-            updateInterval = setInterval(fetchMeasurements, 500);
+            allMeasurements = [];
+            updateCharts(allMeasurements);
+            updateTable(allMeasurements);
+            fetchAllMeasurements();
         }
-        
+
+        function fetchAllMeasurements() {
+            // Если фронт уже остановлен — не продолжаем опрос
+            if (!isMeasuringLocally) return;
+
+            $.get('/measurements?last_id=-1', function(response) {
+                if (response.measurements.length > 0) {
+                    allMeasurements = response.measurements;
+                    updateCharts(allMeasurements);
+                    updateTable(allMeasurements);
+                }
+                if (!response.is_measuring) {
+                    // Сервер завершил — останавливаем UI
+                    stopMeasurementUI();
+                } else if (isMeasuringLocally) {
+                    // Продолжаем опрос только если не нажали «Стоп»
+                    setTimeout(fetchAllMeasurements, 300);
+                }
+            }).fail(function() {
+                // При ошибке сети тоже останавливаемся
+                stopMeasurementUI();
+            });
+        }
+
         function stopMeasurementUI() {
             isMeasuringLocally = false;
             $('#start-measure').prop('disabled', false);
@@ -440,119 +528,162 @@
             if (updateInterval) clearInterval(updateInterval);
         }
 
-        // Функция копирования столбца
+        // ─── Копирование столбца ──────────────────────────────────────────
         function copyColumn(colKey) {
-            const rows = latestMeasurements; // ← используем latestMeasurements
-            if (!rows || rows.length === 0) {
-                alert("Нет данных для копирования");
-                return;
+            if (!latestMeasurements || !latestMeasurements.length) {
+                alert("Нет данных для копирования"); return;
             }
-
-            const values = rows.map(row => row[colKey]).join('\n');
+            const values = latestMeasurements.map(r => r[colKey]).join('\n');
             navigator.clipboard.writeText(values)
-                .then(() => {
-                    alert(`Столбец "${colKey}" скопирован`);
-                })
-                .catch(err => {
-                    console.error('Ошибка копирования:', err);
-                    alert('Не удалось скопировать. Попробуйте вручную.');
-                });
+                .then(() => alert(`Столбец "${colKey}" скопирован`))
+                .catch(() => alert('Не удалось скопировать. Попробуйте вручную.'));
+        }
+        $(document).on('click', '.copy-btn', function() { copyColumn($(this).data('col')); });
+
+        // ─── Логарифмический режим: расчёт числа точек ───────────────────
+        function updateLogPreview() {
+            const fStart = parseFloat($('#frequency_start').val()) || 0;
+            const fEnd   = parseFloat($('#frequency_end').val())   || 0;
+            const ppd    = parseInt($('#points_per_decade').val())  || 10;
+            if (fStart > 0 && fEnd > fStart) {
+                const decades = Math.log10(fEnd / fStart);
+                const N = Math.round(decades * ppd) + 1;
+                $('#log-points-preview').text(N);
+            } else {
+                $('#log-points-preview').text('—');
+            }
         }
 
-        // Обработчик кликов по кнопкам
-        $(document).on('click', '.copy-btn', function() {
-            const colKey = $(this).data('col');
-            copyColumn(colKey);
-        });
-        
+        // ─── Синхронизация top-bar → скрытые поля ────────────────────────
+        function syncTopBarToHidden() {
+            $('#mode').val($('#mode-top').val());
+            $('#speed').val($('#speed-top').val());
+            $('#range').val($('#range-top').val());
+        }
+
+        // ─── Применение переключалки линейный/лог ────────────────────────
+        function applySweepMode() {
+            const isLog = $('#log_sweep').is(':checked');
+            if (isLog) {
+                $('#linear-fields').hide();
+                $('#linear-hint').hide();
+                $('#log-fields').show();
+                $('#label-linear').removeClass('active');
+                $('#label-log').addClass('active');
+            } else {
+                $('#linear-fields').show();
+                $('#linear-hint').show();
+                $('#log-fields').hide();
+                $('#label-linear').addClass('active');
+                $('#label-log').removeClass('active');
+            }
+            updateLogPreview();
+        }
+
+        // ─── Готовность документа ─────────────────────────────────────────
         $(document).ready(function() {
-            // Инициализация графиков
             initCharts();
-        
+
+            // Синхронизация top-bar селекторов
+            $('#speed-top, #mode-top, #range-top').on('change', function() {
+                syncTopBarToHidden();
+            });
+
+            // Переключалка лог/линейный
+            $('#log_sweep').on('change', applySweepMode);
+
+            // Обновление превью точек при изменении параметров
+            $('#frequency_start, #frequency_end, #points_per_decade').on('input', updateLogPreview);
+
             // Подключение
             $('#connect-btn').click(function() {
                 const port = $('#port-select').val();
                 const baudrate = $('#baudrate').val();
-                $.post('/connect', { port: port, baudrate: baudrate }, function(response) {
+                $.post('/connect', { port, baudrate }, function(response) {
                     if (response.success) {
-                        $('#connection-status')
-                            .removeClass('disconnected')
-                            .addClass('connected')
-                            .text('Подключено к ' + port);
+                        $('#connection-status').removeClass('disconnected').addClass('connected').text('Подключено к ' + port);
                         $('#connect-btn').prop('disabled', true);
                         $('#disconnect-btn').prop('disabled', false);
                         if (response.device_info) {
-                            $('#device-info').html(`
-                                <strong>Прибор:</strong> ${response.device_info.name || 'Неизвестен'}<br>
-                                <strong>ID:</strong> ${response.device_info.id || 'Неизвестен'}
-                            `);
+                            $('#device-info').html(`<strong>Прибор:</strong> ${response.device_info.name || 'Неизвестен'}<br>
+                                                    <strong>ID:</strong> ${response.device_info.id || 'Неизвестен'}`);
                         }
                     } else {
                         alert('Ошибка подключения: ' + response.message);
                     }
                 }).fail(() => alert('Не удалось отправить запрос на подключение'));
             });
-        
+
             $('#disconnect-btn').click(function() {
                 $.post('/disconnect', function(response) {
                     if (response.success) {
-                        $('#connection-status')
-                            .removeClass('connected')
-                            .addClass('disconnected')
-                            .text('Отключено');
+                        $('#connection-status').removeClass('connected').addClass('disconnected').text('Отключено');
                         $('#connect-btn').prop('disabled', false);
                         $('#disconnect-btn').prop('disabled', true);
                         $('#device-info').empty();
                     }
                 });
             });
-        
+
             // Измерения
             $('#start-measure').click(function() {
                 $.post('/measurements', { action: 'start' }, function(response) {
                     if (response.success) startMeasurementUI();
                 });
             });
-        
             $('#stop-measure').click(function() {
                 $.post('/measurements', { action: 'stop' }, function(response) {
                     if (response.success) stopMeasurementUI();
                 });
             });
-        
-            // Конфигурация
+
+            // Применить настройки
             $('#update-config').click(function() {
+                syncTopBarToHidden();
+                const isLog = $('#log_sweep').is(':checked');
                 $.post('/config', {
-                    frequency: $('#frequency').val(),
-                    mode: $('#mode').val(),
-                    speed: $('#speed').val(),
-                    range: $('#range').val(),
-                    frequency_start: $('#frequency_start').val(),
-                    frequency_end: $('#frequency_end').val(),
-                    frequency_step: $('#frequency_step').val(),
-                    points: $('#points').val(),
-                    sweep_enabled: $('#sweep_enabled').is(':checked')
+                    mode:              $('#mode-top').val(),
+                    speed:             $('#speed-top').val(),
+                    range:             $('#range-top').val(),
+                    frequency_start:   $('#frequency_start').val(),
+                    frequency_end:     $('#frequency_end').val(),
+                    frequency_step:    $('#frequency_step').val(),
+                    points:            isLog ? '0' : $('#points').val(),
+                    log_sweep:         isLog ? 'true' : 'false',
+                    points_per_decade: $('#points_per_decade').val(),
+                    sweep_enabled:     'true'
                 }, function(response) {
-                    if (!response.success) alert('Ошибка настройки: ' + response.message);
+                    if (response.success) {
+                        const btn = $('#update-config');
+                        btn.text('✓ Применено').css('background','#27ae60');
+                        setTimeout(() => btn.text('Применить настройки').css('background',''), 1500);
+                    } else {
+                        alert('Ошибка настройки: ' + response.message);
+                    }
                 });
             });
-        
+
             // Экспорт
-            $('#export-csv').click(function() {
-                window.location.href = '/export';
-            });
-        
-            // Загрузка текущей конфигурации
+            $('#export-csv').click(function() { window.location.href = '/export'; });
+
+            // Загрузка текущей конфигурации с сервера
             $.get('/config', function(config) {
-                $('#frequency').val(config.frequency);
-                $('#mode').val(config.mode);
-                $('#speed').val(config.speed);
-                $('#range').val(config.range);
                 $('#frequency_start').val(config.frequency_start);
                 $('#frequency_end').val(config.frequency_end);
                 $('#frequency_step').val(config.frequency_step);
                 $('#points').val(config.points);
-                $('#sweep_enabled').prop('checked', config.sweep_enabled);
+                $('#points_per_decade').val(config.points_per_decade || 10);
+
+                // Синхронизируем top-bar
+                if (config.speed) $('#speed-top').val(config.speed);
+                if (config.mode)  $('#mode-top').val(config.mode);
+                if (config.range) $('#range-top').val(config.range);
+                syncTopBarToHidden();
+
+                // Устанавливаем режим развёртки
+                const isLog = !!config.log_sweep;
+                $('#log_sweep').prop('checked', isLog);
+                applySweepMode();
             });
         });
     </script>

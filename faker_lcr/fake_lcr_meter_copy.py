@@ -22,7 +22,7 @@ def normalize_com_port(port):
     return port
 
 
-SERIAL_PORT = normalize_com_port("COM6")
+SERIAL_PORT = normalize_com_port("COM11")
 # Настройки
 # SERIAL_PORT = r"\\.\COM11"
 BAUDRATE = 9600
@@ -35,7 +35,6 @@ CMD_SET_FREQ = 67
 CMD_SET_BIAS = 70
 CMD_RESET = 71
 CMD_MEASURE = 72
-
 
 
 # Параметры модели Рэндлса (настройте под себя)

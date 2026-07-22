@@ -109,21 +109,29 @@ class DeviceConfig:
     # sweep_once: bool = False
 
 
+# class MeterState:
+#     def __init__(self):
+#         self.connection = None
+#         self.measurements = []
+#         self.is_measuring = False
+#         self.config = DeviceConfig()
+#         self.device_info = {"name": None, "id": None}
+#         # internal sweep state: keep track of current frequency while sweeping
+#         self._sweep_current: Optional[float] = None
+#         self._sweep_direction: int = 1
+#         # If using points-based sweep, track current index (0..points-1)
+#         self._sweep_index = 0
+#         self._sweep_current: Optional[float] = None
+#         self._manual_sweep_active = False  # флаг для режима (2)
+#         self._last_measurement_id = 0
 class MeterState:
     def __init__(self):
         self.connection = None
         self.measurements = []
-        self.is_measuring = False
+        self.is_measuring = False  # можно даже это убрать
         self.config = DeviceConfig()
         self.device_info = {"name": None, "id": None}
-        # internal sweep state: keep track of current frequency while sweeping
-        self._sweep_current: Optional[float] = None
-        self._sweep_direction: int = 1
-        # If using points-based sweep, track current index (0..points-1)
-        self._sweep_index = 0
-        self._sweep_current: Optional[float] = None
-        self._manual_sweep_active = False  # флаг для режима (2)
-
+        self._last_measurement_id = 0
 
 state = MeterState()
 
@@ -184,10 +192,11 @@ def send_command(command: int, params: bytes = b"", freq=1000) -> Union[bool, st
 
     try:
         packet = bytes([0xAA, command]) + params
-        if command == 67:
-            state.connection.write(bytes([0xAA, 67]) + struct.pack(">I", int(freq)))
-        else:
-            state.connection.write(packet)
+        # if command == 67:
+        #     state.connection.write(bytes([0xAA, 67]) + struct.pack(">I", int(freq)))
+        # else:
+        #     state.connection.write(packet)
+        state.connection.write(packet)
         time.sleep(0.01)
         response_bytes = None
 
@@ -294,6 +303,7 @@ def parse_measurement(data: bytes) -> Optional[Dict]:
             unit = "Ω"
 
         measurement = {
+            "id": state._last_measurement_id,
             "timestamp": datetime.now().isoformat(timespec="milliseconds"),
             "mode_code": mode_code,
             "mode": mode_map.get(mode_code, "unknown"),
@@ -311,6 +321,8 @@ def parse_measurement(data: bytes) -> Optional[Dict]:
             "unit": unit,
         }
 
+        state._last_measurement_id += 1
+
         return measurement
 
     except Exception as e:
@@ -325,20 +337,169 @@ def get_available_ports() -> List[str]:
     return a
 
 
+# def measurement_worker():
+#     while True:
+#         if not (state.is_measuring and state.connection and state.connection.is_open):
+#             time.sleep(0.1)
+#             continue
+
+#         # Просто делаем одно измерение и ждём
+#         measurement = send_command(CMD_MEASURE)
+#         if measurement:
+#             state.measurements.append(measurement)
+#             if len(state.measurements) > MAX_MEASUREMENTS:
+#                 state.measurements = state.measurements[-MAX_MEASUREMENTS:]
+
+
+#         time.sleep(MEASUREMENT_INTERVAL)
+# def measurement_worker():
+#     """Фоновый воркер: однократный проход по частотам."""
+#     while True:
+#         if not (state.is_measuring and state.connection and state.connection.is_open):
+#             time.sleep(0.1)
+#             continue
+
+#         try:
+#             f_start = state.config.frequency_start
+#             f_end = state.config.frequency_end
+
+#             # Одна частота — одно измерение
+#             if f_start == f_end:
+#                 send_command(CMD_SET_FREQ, struct.pack(">I", int(f_start)))
+#                 time.sleep(0.01)
+#                 measurement = send_command(CMD_MEASURE)
+#                 if measurement:
+#                     state.measurements.append(measurement)
+#                 state.is_measuring = False
+#                 continue
+
+#             # Множество частот — генерация списка
+#             if not hasattr(state, "_freq_list"):
+#                 if state.config.points and state.config.points > 1:
+#                     n = state.config.points
+#                     step = (f_end - f_start) / (n - 1) if n > 1 else 0
+#                     state._freq_list = [f_start + i * step for i in range(n)]
+#                 else:
+#                     f_step = max(state.config.frequency_step, 1e-6)
+#                     state._freq_list = []
+#                     f = f_start
+#                     while f <= f_end:
+#                         state._freq_list.append(f)
+#                         f += f_step
+#                     if state._freq_list[-1] != f_end:
+#                         state._freq_list.append(f_end)
+#                 state._current_index = 0
+
+#             # Завершение
+#             if state._current_index >= len(state._freq_list):
+#                 state.is_measuring = False
+#                 if hasattr(state, "_freq_list"):
+#                     delattr(state, "_freq_list")
+#                 if hasattr(state, "_current_index"):
+#                     delattr(state, "_current_index")
+#                 logger.info("Однократный проход завершён")
+#                 continue
+
+#             # Текущая частота
+#             freq = state._freq_list[state._current_index]
+#             state.config.frequency = freq
+
+#             # Установка частоты
+#             send_command(CMD_SET_FREQ, struct.pack(">I", int(freq)))
+#             time.sleep(0.01)
+
+#             # Измерение
+#             measurement = send_command(CMD_MEASURE)
+#             if measurement:
+#                 state.measurements.append(measurement)
+#                 if len(state.measurements) > MAX_MEASUREMENTS:
+#                     state.measurements = state.measurements[-MAX_MEASUREMENTS:]
+
+#             state._current_index += 1
+#             time.sleep(MEASUREMENT_INTERVAL)
+
+
+#         except Exception as e:
+#             logger.error(f"Ошибка в measurement_worker: {e}")
+#         finally:
+#             time.sleep(0.01)
+# def measurement_worker():
+#     while True:
+#         if not (state.is_measuring and state.connection and state.connection.is_open):
+#             time.sleep(0.1)
+#             continue
+
+#         try:
+#             f_start = state.config.frequency_start
+#             f_end = state.config.frequency_end
+
+#             # Одна частота
+#             if f_start == f_end:
+#                 send_command(CMD_SET_FREQ, struct.pack(">I", int(f_start)))
+#                 time.sleep(0.01)
+#                 measurement = send_command(CMD_MEASURE)
+#                 if measurement:
+#                     state.measurements.append(measurement)
+#                 state.is_measuring = False
+#                 continue
+
+#             # Множество частот — генерация списка при первом входе
+#             if not hasattr(state, "_freq_list"):
+#                 if state.config.points and state.config.points > 1:
+#                     n = state.config.points
+#                     step = (f_end - f_start) / (n - 1) if n > 1 else 0
+#                     state._freq_list = [f_start + i * step for i in range(n)]
+#                 else:
+#                     f_step = max(state.config.frequency_step, 1e-6)
+#                     state._freq_list = []
+#                     f = f_start
+#                     while f <= f_end:
+#                         state._freq_list.append(f)
+#                         f += f_step
+#                     if state._freq_list[-1] != f_end:
+#                         state._freq_list.append(f_end)
+#                 state._current_index = 0
+
+#             # Проверка завершения
+#             if state._current_index >= len(state._freq_list):
+#                 state.is_measuring = False
+#                 if hasattr(state, "_freq_list"):
+#                     delattr(state, "_freq_list")
+#                 if hasattr(state, "_current_index"):
+#                     delattr(state, "_current_index")
+#                 continue
+
+#             # Текущая частота
+#             freq = state._freq_list[state._current_index]
+#             state.config.frequency = freq
+
+#             # Установка частоты
+#             send_command(CMD_SET_FREQ, struct.pack(">I", int(freq)))
+#             time.sleep(0.01)
+
+#             # Измерение
+#             measurement = send_command(CMD_MEASURE)
+#             if measurement:
+#                 state.measurements.append(measurement)
+
+#             # Переход к следующей частоте
+#             state._current_index += 1
+
+#             # ⚠️ Важно: выход из цикла после одного измерения!
+#             state.is_measuring = False  # ← временно, чтобы UI обновился
+
+#             # Но как продолжить? → НЕТ! Лучше: делаем ОДНО измерение за вызов
+#             # → поэтому убираем этот worker и используем другой подход
+
+
+#         except Exception as e:
+#             logger.error(f"Ошибка в measurement_worker: {e}")
+#         finally:
+#             time.sleep(0.01)
 def measurement_worker():
+    # Этот воркер НЕ нужен для sweep'а — он только мешает
     while True:
-        if not (state.is_measuring and state.connection and state.connection.is_open):
-            time.sleep(0.1)
-            continue
-
-        # Просто делаем одно измерение и ждём
-        measurement = send_command(CMD_MEASURE)
-        if measurement:
-            state.measurements.append(measurement)
-            if len(state.measurements) > MAX_MEASUREMENTS:
-                state.measurements = state.measurements[-MAX_MEASUREMENTS:]
-
-        time.sleep(MEASUREMENT_INTERVAL)
+        time.sleep(1)
 
 
 # def measurement_worker():
@@ -703,6 +864,7 @@ def handle_config():
 #     """Запуск или остановка измерений"""
 #     global state
 
+
 #     action = request.form.get("action")
 #     if action == "start":
 #         state.is_measuring = True
@@ -735,49 +897,133 @@ def handle_config():
 #         return jsonify({"success": True, "message": "Остановка измерения"})
 #     else:
 #         return jsonify({"success": False, "message": "Неверное действие"})
+# @app.route("/measurements", methods=["POST"])
+# def control_measurements():
+#     action = request.form.get("action")
+#     if action == "start":
+#         state.measurements.clear()
+
+#         f_start = state.config.frequency_start
+#         f_end = state.config.frequency_end
+
+#         if f_start == f_end:
+#             # Однократное измерение
+#             state.is_measuring = True
+#         else:
+#             # Sweep: последовательно устанавливаем частоты
+#             if state.config.points and state.config.points > 1:
+#                 n = state.config.points
+#                 step = (f_end - f_start) / (n - 1) if n > 1 else 0
+#                 freqs = [f_start + i * step for i in range(n)]
+#             else:
+#                 freqs = []
+#                 f = f_start
+#                 step = max(state.config.frequency_step, 1e-6)
+#                 while f <= f_end:
+#                     freqs.append(f)
+#                     f += step
+#                 if freqs and freqs[-1] != f_end:
+#                     freqs.append(f_end)
+
+#             # Устанавливаем частоты и делаем измерения
+#             for freq in freqs:
+#                 send_command(CMD_SET_FREQ, struct.pack(">I", int(freq)))
+#                 time.sleep(0.1)
+#                 measurement = send_command(CMD_MEASURE)
+#                 if measurement:
+#                     state.measurements.append(measurement)
+
+#             # После sweep'а останавливаемся
+#             state.is_measuring = False
+
+
+#         return jsonify({"success": True, "message": "Измерение завершено"})
+#     elif action == "stop":
+#         state.is_measuring = False
+#         return jsonify({"success": True, "message": "Остановлено"})
+#     else:
+#         return jsonify({"success": False, "message": "Неверное действие"})
+# @app.route("/measurements", methods=["POST"])
+# def control_measurements():
+#     action = request.form.get("action")
+#     if action == "start":
+#         state.is_measuring = True
+#         state.measurements.clear()
+#         # Сброс состояния sweep
+#         if hasattr(state, "_freq_list"):
+#             delattr(state, "_freq_list")
+#         if hasattr(state, "_current_index"):
+#             delattr(state, "_current_index")
+#         return jsonify({"success": True, "message": "Запуск измерения"})
+#     elif action == "stop":
+#         state.is_measuring = False
+#         return jsonify({"success": True, "message": "Остановка измерения"})
+#     else:
+#         return jsonify({"success": False, "message": "Неверное действие"})
+# @app.route("/measurements", methods=["POST"])
+# def control_measurements():
+#     action = request.form.get("action")
+#     if action == "start":
+#         state.is_measuring = True
+#         state.measurements.clear()
+#         # Сброс состояния sweep
+#         if hasattr(state, "_freq_list"):
+#             delattr(state, "_freq_list")
+#         return jsonify({"success": True, "message": "Запуск измерения"})
+#     elif action == "stop":
+#         state.is_measuring = False  # ← этого достаточно
+#         return jsonify({"success": True, "message": "Остановка измерения"})
+#     else:
+#         return jsonify({"success": False, "message": "Неверное действие"})
 @app.route("/measurements", methods=["POST"])
 def control_measurements():
     action = request.form.get("action")
     if action == "start":
         state.measurements.clear()
 
-        f_start = state.config.frequency_start
-        f_end = state.config.frequency_end
+        f_start = float(state.config.frequency_start)
+        f_end = float(state.config.frequency_end)
 
+        # Режим 1: одна частота
         if f_start == f_end:
-            # Однократное измерение
-            state.is_measuring = True
+            send_command(CMD_SET_FREQ, struct.pack(">I", int(f_start)))
+            time.sleep(0.01)
+            measurement = send_command(CMD_MEASURE)
+            if measurement:
+                state.measurements.append(measurement)
         else:
-            # Sweep: последовательно устанавливаем частоты
+            # Режим 2: проход от start до end
+            freqs = []
             if state.config.points and state.config.points > 1:
+                # Генерация по точкам
                 n = state.config.points
-                step = (f_end - f_start) / (n - 1) if n > 1 else 0
+                step = (f_end - f_start) / (n - 1)
                 freqs = [f_start + i * step for i in range(n)]
             else:
-                freqs = []
+                # Генерация по шагу
                 f = f_start
-                step = max(state.config.frequency_step, 1e-6)
+                step = max(float(state.config.frequency_step), 1e-6)
                 while f <= f_end:
                     freqs.append(f)
                     f += step
-                if freqs and freqs[-1] != f_end:
+                # Убедимся, что f_end точно есть
+                if freqs[-1] != f_end:
                     freqs.append(f_end)
 
-            # Устанавливаем частоты и делаем измерения
+            # Проходим по всем частотам
             for freq in freqs:
                 send_command(CMD_SET_FREQ, struct.pack(">I", int(freq)))
-                time.sleep(0.1)
+                time.sleep(0.01)
                 measurement = send_command(CMD_MEASURE)
                 if measurement:
                     state.measurements.append(measurement)
 
-            # После sweep'а останавливаемся
-            state.is_measuring = False
-
         return jsonify({"success": True, "message": "Измерение завершено"})
+
     elif action == "stop":
-        state.is_measuring = False
+        # Остановка не нужна — измерения и так синхронные
         return jsonify({"success": True, "message": "Остановлено"})
+
     else:
         return jsonify({"success": False, "message": "Неверное действие"})
 
@@ -785,7 +1031,12 @@ def control_measurements():
 @app.route("/measurements", methods=["GET"])
 def get_measurements():
     """Получить данные измерений"""
-    return jsonify({"measurements": state.measurements[-100:], "is_measuring": state.is_measuring})
+    last_id = int(request.args.get("last_id", -1))
+    new_data = [m for m in state.measurements if m["id"] > last_id]
+    return jsonify(
+        {"measurements": new_data, "is_measuring": state.is_measuring, "last_id": state._last_measurement_id - 1}
+    )
+    # return jsonify({"measurements": state.measurements[-100:], "is_measuring": state.is_measuring})
 
 
 @app.route("/export", methods=["GET"])
