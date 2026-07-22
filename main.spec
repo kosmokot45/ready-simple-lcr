@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('service.py', '.'), ('templates', 'templates')],
+    datas=[('service.py', '.'), ('templates', 'templates'), ('static', 'static')],
     hiddenimports=['serial', 'serial.tools.list_ports', 'flask', 'flask.json', 'webbrowser', 'threading', 'csv', 'io', 'struct', 'math', 'logging', 'datetime', 'time', 'os', 'dataclasses', 'typing'],
     hookspath=[],
     hooksconfig={},

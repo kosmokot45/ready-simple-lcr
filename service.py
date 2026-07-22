@@ -716,7 +716,7 @@ def export_data():
         "flags",
     ]
 
-    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     writer.writerows(measurements_copy)
 
